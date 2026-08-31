@@ -5,3 +5,10 @@
 node_modules/
 inspo
 triage/
+
+# Табло HUB75
+firmware/.pio/
+firmware/src/secrets.h
+firmware/test/host_render
+mock-server/.preview.png
+__pycache__/

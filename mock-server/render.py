@@ -125,7 +125,7 @@ def render_page(page, t=0.0, now='12:00', w=PANEL_W, h=PANEL_H):
         if kind == 'fill':
             cv.fill(c)
         elif kind == 'rect':
-            cv.rect(L['x'], L['y'], L['w'], L['h'], c, L.get('f', False))
+            cv.rect(L['x'], L['y'], L['w'], L['h'], c, L.get('fill', False))
         elif kind == 'line':
             cv.line(L['x'], L['y'], L['x2'], L['y2'], c)
         elif kind in ('text', 'clock'):
@@ -159,11 +159,19 @@ def render_page(page, t=0.0, now='12:00', w=PANEL_W, h=PANEL_H):
     return cv
 
 
+# Градации яркости: без них тусклый фон прогресс-бара неотличим от заливки.
+_RAMP = ((8, '  '), (64, '░░'), (140, '▒▒'), (256, '██'))
+
+
 def to_ascii(cv):
     """Каждый пиксель — два символа, чтобы пропорции не плыли в терминале."""
     out = ['+' + '-' * (cv.w * 2) + '+']
     for row in cv.px:
-        out.append('|' + ''.join('  ' if p == (0, 0, 0) else '██' for p in row) + '|')
+        cells = []
+        for r, g, b in row:
+            lum = (r * 30 + g * 59 + b * 11) // 100
+            cells.append(next(ch for lim, ch in _RAMP if lum < lim))
+        out.append('|' + ''.join(cells) + '|')
     out.append('+' + '-' * (cv.w * 2) + '+')
     return '\n'.join(out)
 
