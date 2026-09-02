@@ -1,0 +1,30 @@
+# секреты
+.env
+
+# Home Assistant — то, что генерируется само при работе
+homeassistant/config/.storage/
+homeassistant/config/.cloud/
+homeassistant/config/deps/
+homeassistant/config/tts/
+homeassistant/config/blueprints/
+homeassistant/config/*.db
+homeassistant/config/*.db-*
+homeassistant/config/*.log
+homeassistant/config/*.log.*
+homeassistant/config/.HA_VERSION
+homeassistant/config/secrets.yaml
+
+# Zigbee2MQTT — база устройств и логи
+zigbee2mqtt/data/database.db
+zigbee2mqtt/data/database.db.backup
+zigbee2mqtt/data/state.json
+zigbee2mqtt/data/coordinator_backup.json
+zigbee2mqtt/data/log/
+
+# Mosquitto — данные и пароли
+mosquitto/data/
+mosquitto/log/
+mosquitto/config/passwd
+
+# бэкапы
+backups/

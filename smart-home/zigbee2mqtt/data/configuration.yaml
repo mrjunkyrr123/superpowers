@@ -1,0 +1,33 @@
+# Zigbee2MQTT. Логин/пароль MQTT и тип адаптера приходят из .env (см. docker-compose.yml)
+
+homeassistant:
+  enabled: true
+
+# Веб-интерфейс для добавления устройств и карты сети
+frontend:
+  enabled: true
+  port: 8080
+
+# Спаривание выключено по умолчанию. Включаешь кнопкой в веб-морде, когда добавляешь устройство.
+permit_join: false
+
+mqtt:
+  base_topic: zigbee2mqtt
+  server: mqtt://mosquitto:1883
+
+serial:
+  # /dev/zigbee — так стик проброшен в контейнер в docker-compose.yml
+  port: /dev/zigbee
+
+advanced:
+  log_level: info
+  # Канал 11 — самый совместимый. Если Wi-Fi 2.4 ГГц на канале 1, бери 15 или 20; если на 6/11 — бери 25.
+  channel: 11
+  # Ключ сети. GENERATE — сгенерируется при первом старте. Потом НЕ менять, иначе все устройства отвалятся.
+  network_key: GENERATE
+  pan_id: GENERATE
+  ext_pan_id: GENERATE
+  last_seen: ISO_8601
+
+# Устройства будут дописываться сюда автоматически после спаривания
+devices: {}

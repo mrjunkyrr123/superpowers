@@ -1,0 +1,28 @@
+# Базовая конфигурация Home Assistant.
+# Большинство настроек делается через веб-интерфейс, здесь только то, что через UI нельзя.
+
+# Подключает стандартные интеграции (история, логбук, мобильное приложение и т.д.)
+default_config:
+
+# Home Assistant в Docker без Supervisor — говорим, что мы за "прокси" не сидим,
+# но разрешаем доступ из локалки.
+http:
+  use_x_forwarded_for: false
+
+# История. На Orange Pi 3 LTS всего 8 ГБ eMMC — не даём базе разрастаться и
+# не убиваем память постоянной записью.
+recorder:
+  purge_keep_days: 7
+  commit_interval: 30
+  exclude:
+    domains:
+      - update
+      - automation
+      - updater
+    entity_globs:
+      - sensor.*_linkquality
+      - sensor.*_last_seen
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml

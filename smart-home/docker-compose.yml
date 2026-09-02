@@ -1,0 +1,56 @@
+# Умный дом: Home Assistant + Zigbee2MQTT + Mosquitto
+# Запуск:  docker compose up -d
+# Логи:    docker compose logs -f zigbee2mqtt
+# Стоп:    docker compose down
+
+services:
+  # MQTT-брокер. "Почта" между Zigbee2MQTT и Home Assistant.
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+    environment:
+      - TZ=${TZ}
+
+  # Мост между Zigbee-стиком и MQTT. Веб-морда: http://<ip>:8080
+  zigbee2mqtt:
+    image: ghcr.io/koenkk/zigbee2mqtt:latest
+    container_name: zigbee2mqtt
+    restart: unless-stopped
+    depends_on:
+      - mosquitto
+    ports:
+      - "${Z2M_PORT:-8080}:8080"
+    volumes:
+      - ./zigbee2mqtt/data:/app/data
+      - /run/udev:/run/udev:ro
+    devices:
+      - "${ZIGBEE_DEVICE}:/dev/zigbee"
+    environment:
+      - TZ=${TZ}
+      # Переменные ниже перекрывают configuration.yaml, чтобы пароли жили только в .env
+      - ZIGBEE2MQTT_CONFIG_MQTT_USER=${MQTT_USER}
+      - ZIGBEE2MQTT_CONFIG_MQTT_PASSWORD=${MQTT_PASSWORD}
+      - ZIGBEE2MQTT_CONFIG_SERIAL_ADAPTER=${ZIGBEE_ADAPTER}
+
+  # Сам Home Assistant. Веб-морда: http://<ip>:8123
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: homeassistant
+    restart: unless-stopped
+    depends_on:
+      - mosquitto
+    # host-сеть нужна, чтобы HA сам находил устройства в локалке (Chromecast, ESPHome, mDNS)
+    network_mode: host
+    volumes:
+      - ./homeassistant/config:/config
+      - /etc/localtime:/etc/localtime:ro
+      - /run/dbus:/run/dbus:ro
+    environment:
+      - TZ=${TZ}
