@@ -5,8 +5,10 @@
 картинку теми же шрифтами (``fonts.json`` генерируется вместе с прошивочными
 ``fonts.cpp``) и выводит её в терминал или в PNG.
 
-    python3 mock-server/render.py sample.json            # ASCII в терминал
+    python3 mock-server/render.py sample.json             # ASCII в терминал
     python3 mock-server/render.py sample.json -o out.png  # PNG, масштаб x8
+
+Размер холста берётся из полей "w"/"h" самого display list, иначе 64x32.
 
 Зависимостей нет — PNG пишется через stdlib.
 """
@@ -207,9 +209,11 @@ def main():
     src = args[0] if args else os.path.join(HERE, 'sample.json')
     with open(src, encoding='utf-8') as fh:
         doc = json.load(fh)
+    w = doc.get('w', PANEL_W)
+    h = doc.get('h', PANEL_H)
     pages = doc.get('pages', [doc])
     for i, page in enumerate(pages):
-        cv = render_page(page)
+        cv = render_page(page, w=w, h=h)
         if out:
             path = out if len(pages) == 1 else out.replace('.png', f'-{i + 1}.png')
             to_png(cv, path)
