@@ -1,0 +1,20 @@
+# Home Assistant OS на PiPO X9s (2 ГБ RAM, eMMC).
+# Залить через аддон File editor в /homeassistant/configuration.yaml, затем перезапустить HA.
+
+default_config:
+
+# История. 2 ГБ памяти и eMMC — не даём базе разрастаться и не пишем на диск каждую секунду.
+recorder:
+  purge_keep_days: 7
+  commit_interval: 30
+  exclude:
+    domains:
+      - update
+      - automation
+    entity_globs:
+      - sensor.*_linkquality
+      - sensor.*_last_seen
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml

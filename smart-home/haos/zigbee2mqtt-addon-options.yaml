@@ -1,0 +1,23 @@
+# Настройки аддона Zigbee2MQTT (вкладка «Конфигурация», режим YAML).
+# Заполнить ДО первого запуска.
+
+data_path: /config/zigbee2mqtt
+
+# Пусто = аддон сам возьмёт адрес, логин и пароль из аддона Mosquitto. Не трогать.
+mqtt: {}
+
+serial:
+  # Скопировать из Настройки → Система → Оборудование → «Все оборудование» → ttyUSB.
+  # Путь /dev/serial/by-id/... не меняется после перезагрузок, /dev/ttyUSB0 — может.
+  # ZBDongle-P: ...usb-ITead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_XXXXXXXX-if00-port0
+  # ZBDongle-E: ...usb-ITead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2_XXXXXXXX-if00-port0
+  port: /dev/serial/by-id/ЗАМЕНИ_МЕНЯ
+  # zstack — ZBDongle-P (чип CC2652P)
+  # ember  — ZBDongle-E (чип EFR32MG21), нужна прошивка 7.4+, см. docs/03-zigbee.md
+  adapter: zstack
+
+# Всё ниже — по желанию. Остальные настройки правятся в веб-интерфейсе Zigbee2MQTT → Settings.
+advanced:
+  # Канал 11, 15, 20 или 25. Выбрать до добавления устройств, см. docs/03-zigbee.md
+  channel: 11
+  log_level: info

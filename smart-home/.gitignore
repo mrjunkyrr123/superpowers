@@ -1,30 +1,30 @@
 # секреты
-.env
+docker/.env
 
 # Home Assistant — то, что генерируется само при работе
-homeassistant/config/.storage/
-homeassistant/config/.cloud/
-homeassistant/config/deps/
-homeassistant/config/tts/
-homeassistant/config/blueprints/
-homeassistant/config/*.db
-homeassistant/config/*.db-*
-homeassistant/config/*.log
-homeassistant/config/*.log.*
-homeassistant/config/.HA_VERSION
-homeassistant/config/secrets.yaml
+docker/homeassistant/config/.storage/
+docker/homeassistant/config/.cloud/
+docker/homeassistant/config/deps/
+docker/homeassistant/config/tts/
+docker/homeassistant/config/blueprints/
+docker/homeassistant/config/*.db
+docker/homeassistant/config/*.db-*
+docker/homeassistant/config/*.log
+docker/homeassistant/config/*.log.*
+docker/homeassistant/config/.HA_VERSION
+docker/homeassistant/config/secrets.yaml
 
 # Zigbee2MQTT — база устройств и логи
-zigbee2mqtt/data/database.db
-zigbee2mqtt/data/database.db.backup
-zigbee2mqtt/data/state.json
-zigbee2mqtt/data/coordinator_backup.json
-zigbee2mqtt/data/log/
+docker/zigbee2mqtt/data/database.db
+docker/zigbee2mqtt/data/database.db.backup
+docker/zigbee2mqtt/data/state.json
+docker/zigbee2mqtt/data/coordinator_backup.json
+docker/zigbee2mqtt/data/log/
 
 # Mosquitto — данные и пароли
-mosquitto/data/
-mosquitto/log/
-mosquitto/config/passwd
+docker/mosquitto/data/
+docker/mosquitto/log/
+docker/mosquitto/config/passwd
 
 # бэкапы
-backups/
+docker/backups/
