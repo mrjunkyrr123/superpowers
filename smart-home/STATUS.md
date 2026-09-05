@@ -24,20 +24,28 @@ HAOS с первой USB-флешки загрузился, Supervisor подн�
 
 ## Следующий шаг: перенести HAOS на eMMC
 
-Вариант А, без второй флешки. Загрузиться с первой (рабочей) USB-флешки HAOS, дождаться `ha >`, USB-клавиатура, затем:
-```
-login
-which curl unxz dd
-lsblk
-```
-Если все три утилиты есть, а eMMC виден как `mmcblk0` (~29G, три раздела):
-```
-curl -L https://github.com/home-assistant/operating-system/releases/download/18.2/haos_generic-x86-64-18.2.img.xz | unxz | dd of=/dev/mmcblk0 bs=4M
-poweroff
-```
-Вынуть флешку, включить, HAOS грузится с eMMC. IP смотреть на экране в строке `enp0s20u3`.
+Обновление 2026-09-05, вечер. Флешка 16 ГБ всё-таки загрузилась (`sda`, 15G, `/mnt/data` 14.3G).
+В аварийной консоли HAOS проверено: `curl` и `dd` есть, **`unxz` нет**. eMMC = `/dev/mmcblk0`, 29.1G,
+три раздела старого Linux, ничего на него ещё не писалось.
 
-Вариант Б, если `unxz` нет. Ubuntu Desktop на рабочую флешку через Etcher, Try Ubuntu, `lsblk`, `xzcat ... | sudo dd of=/dev/mmcblk0 bs=4M status=progress conv=fsync`. Подробно: `docs/02-install-haos-x9s.md`, шаг 3.
+Набирать длинные команды на консоли коробки неудобно, поэтому план такой:
+
+1. `exit` из аварийной консоли, дать HAOS с флешки докачать Core (места теперь хватает).
+2. В браузере создать пользователя, поставить аддон **Advanced SSH & Web Terminal**,
+   задать пароль, **выключить «Режим защиты»** (иначе `/dev/mmcblk0` не виден), запустить.
+3. В веб-терминале аддона (или по SSH с ноутбука, порт 22, пользователь `root`):
+   ```
+   apk add xz
+   lsblk                       # убедиться, что mmcblk0 = 29.1G, три раздела, без монтирований
+   curl -L https://github.com/home-assistant/operating-system/releases/download/18.2/haos_generic-x86-64-18.2.img.xz | unxz | dd of=/dev/mmcblk0 bs=4M
+   ```
+   Ждать до строк `records out`, объём около 6 ГБ. Затем Настройки → Система → Выключить.
+4. Вынуть флешку, включить. HAOS грузится с eMMC, чистая система, пользователя создать заново.
+
+Альтернатива без аддона, прямо из аварийной консоли (если `docker` там работает):
+```
+curl -L <тот же URL> | docker run --rm -i alpine unxz | dd of=/dev/mmcblk0 bs=4M conv=fsync
+```
 
 ## После переезда
 
