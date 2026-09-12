@@ -20,6 +20,8 @@
   0x0A  яркость          77 байт
   0x55  строка пикселей  21 байт заголовка + ширина*3
   0x01  sync             112 байт, защёлкивает кадр на экране
+  0x07  discover         284 байта, опрос карт
+  0x08  ответ карты      ~1070 байт, приходит с ethertype 0x0805
 
 Порядок на кадр: яркость → все строки → sync.
 
@@ -48,6 +50,20 @@ PIXEL_HEADER_SIZE = 8
 # вместе с 14-байтовым заголовком Ethernet.
 MAX_PIXELS_PER_PACKET = 497
 MAX_BYTES_PER_PACKET = MAX_PIXELS_PER_PACKET * 3
+
+# Ответ карты на discover приходит с ethertype 0x0805: старший байт — тип
+# пакета 0x08, младший — data[0] = 0x05, признак карты серии 5A. Приёмный
+# сокет обязан быть открыт именно с этим протоколом, иначе ядро не отдаст
+# ни одного кадра.
+ETH_P_REPLY = 0x0805
+
+# Карта отвечает, подставляя в источник тот MAC, на который мы слали.
+REPLY_SRC_MAC = DEST_MAC
+
+# setsockopt для промискуитетного режима (см. packet(7)).
+SOL_PACKET = 263
+PACKET_ADD_MEMBERSHIP = 1
+PACKET_MR_PROMISC = 1
 
 
 def _eth(packet_type, data, total_size=None):
@@ -119,17 +135,64 @@ def frame_packets(rgb, width, height, brightness=200):
             [sync_packet(brightness)])
 
 
-class RawSink:
-    """Отправка в сеть. Нужен root или CAP_NET_RAW на процессе."""
+def parse_discover_reply(pkt):
+    """Разбирает ответ 0x08. Возвращает словарь или None, если это не он.
 
-    def __init__(self, iface):
+    Смещения полей взяты из разбора в FPP; часть из них там помечена как
+    предположительная, поэтому ширина и высота — справочные, доверять им
+    как конфигурации карты не стоит.
+    """
+    if len(pkt) < 1000:
+        return None
+    if pkt[6:12] != REPLY_SRC_MAC or pkt[12] != 0x08:
+        return None
+    d = pkt[DATA_OFFSET:]
+    return {
+        'id': d[85],
+        'firmware': f'{d[2]}.{d[3]}',
+        'firmware_major': d[2],
+        'width': (d[21] << 8) | d[22],
+        'height': (d[23] << 8) | d[24],
+        'packets': int.from_bytes(d[38:42], 'big'),
+        'uptime_ms': int.from_bytes(d[46:50], 'big'),
+    }
+
+
+class RawSink:
+    """Отправка в сеть. Нужен root или CAP_NET_RAW на процессе.
+
+    proto — протокол приёмного фильтра. Для отправки он роли не играет (кадр
+    мы собираем целиком сами), но для приёма ответов обязателен ETH_P_REPLY.
+    """
+
+    def __init__(self, iface, proto=0, promiscuous=False):
         self.iface = iface
-        self.sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
+        self.sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW,
+                                  socket.htons(proto) if proto else 0)
         self.sock.bind((iface, 0))
+        if promiscuous:
+            self._set_promiscuous()
+
+    def _set_promiscuous(self):
+        # Ответ карты уходит широковещательно, так что режим обычно не нужен;
+        # ставим на всякий случай, как это делает FPP. Ядро снимет его само
+        # при закрытии сокета.
+        try:
+            mreq = struct.pack('IHH8s', socket.if_nametoindex(self.iface),
+                               PACKET_MR_PROMISC, 0, b'')
+            self.sock.setsockopt(SOL_PACKET, PACKET_ADD_MEMBERSHIP, mreq)
+        except OSError:
+            pass  # не критично: ответ и так широковещательный
 
     def send(self, packets):
         for p in packets:
             self.sock.send(p)
+
+    def recv(self, bufsize=2048):
+        return self.sock.recv(bufsize)
+
+    def settimeout(self, t):
+        self.sock.settimeout(t)
 
     def close(self):
         self.sock.close()

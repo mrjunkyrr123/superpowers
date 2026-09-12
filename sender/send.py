@@ -19,6 +19,7 @@
 """
 
 import argparse
+import os
 import socket
 import struct
 import sys
@@ -141,36 +142,84 @@ def load_image(path, w, h, fit):
     return img.tobytes()
 
 
-def discover(iface, timeout=2.0):
-    """Шлёт 0x07 и слушает ответы 0x08. Печатает найденные карты."""
-    sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
-    sock.bind((iface, 0))
-    sock.settimeout(0.3)
-    sock.send(cl.discover_packet())
+def iface_state(iface):
+    """Читает состояние интерфейса из sysfs. Диагностика до обвинения карты."""
+    base = f'/sys/class/net/{iface}'
+    if not os.path.isdir(base):
+        return None
 
-    seen = {}
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+    def read(name):
         try:
-            pkt = sock.recv(2048)
-        except socket.timeout:
-            continue
-        if len(pkt) < 100 or pkt[12] != 0x08:
-            continue
-        src = ':'.join(f'{b:02x}' for b in pkt[6:12])
-        data = pkt[cl.DATA_OFFSET:]
-        fw = f'{data[2]}.{data[3]}'
-        card = data[85] if len(data) > 85 else 0
-        seen[src] = (fw, card)
-    sock.close()
+            with open(f'{base}/{name}') as fh:
+                return fh.read().strip()
+        except OSError:
+            return '?'
 
-    if not seen:
-        print('карт не найдено.')
-        print('проверьте: линк на порту, питание карты, что кабель в порт J1/вход,')
-        print('и что интерфейс поднят:  sudo ip link set %s up' % iface)
+    return {'operstate': read('operstate'), 'carrier': read('carrier'),
+            'speed': read('speed'), 'mac': read('address')}
+
+
+def discover(iface, timeout=2.0, max_receivers=8):
+    """Опрашивает карты и печатает найденные.
+
+    Приёмный сокет открывается с протоколом 0x0805 — именно с ним приходит
+    ответ карты. С протоколом 0 ядро не отдаёт кадры вообще, и поиск всегда
+    возвращает пустоту, даже если карта исправно отвечает.
+    """
+    st = iface_state(iface)
+    if st is None:
+        print(f'интерфейса {iface} нет. доступные:')
+        for n in sorted(os.listdir('/sys/class/net')):
+            print(f'  {n}')
         return 1
-    for mac, (fw, card) in seen.items():
-        print(f'найдена карта: MAC {mac}  прошивка {fw}  номер {card}')
+
+    print(f'интерфейс {iface}: состояние {st["operstate"]}, '
+          f'линк {st["carrier"]}, скорость {st["speed"]} Мбит/с, MAC {st["mac"]}')
+    if st['operstate'] != 'up' or st['carrier'] != '1':
+        print(f'  линка нет. поднимите интерфейс:  sudo ip link set {iface} up')
+        print('  и проверьте, что кабель воткнут в карту, а карта запитана.')
+
+    sink = cl.RawSink(iface, proto=cl.ETH_P_REPLY, promiscuous=True)
+    sink.settimeout(0.25)
+
+    found = {}
+    try:
+        for rid in range(max_receivers):
+            sink.send([cl.discover_packet(rid)])
+            deadline = time.time() + timeout / max_receivers
+            while time.time() < deadline:
+                try:
+                    pkt = sink.recv(2048)
+                except (socket.timeout, TimeoutError):
+                    continue
+                info = cl.parse_discover_reply(pkt)
+                if info:
+                    found[info['id']] = info
+    finally:
+        sink.close()
+
+    if not found:
+        print('\nкарт не найдено.')
+        print('проверьте по порядку:')
+        print('  1. карта запитана — на ней должен гореть светодиод')
+        print('  2. патч-корд в карте и в этом интерфейсе')
+        print(f'  3. интерфейс поднят:  sudo ip link set {iface} up')
+        print('  4. NetworkManager не перехватил порт:')
+        print(f'       sudo nmcli device set {iface} managed no')
+        print('  5. запущено от root (нужен CAP_NET_RAW)')
+        print('  адрес карте не нужен: она работает без IP и не отвечает на ping.')
+        return 1
+
+    print()
+    for info in sorted(found.values(), key=lambda i: i['id']):
+        print(f'карта #{info["id"]}: прошивка {info["firmware"]}, '
+              f'аптайм {info["uptime_ms"] / 1000:.1f} с, '
+              f'принято пакетов {info["packets"]}')
+        print(f'  размер по данным карты: {info["width"]}x{info["height"]} '
+              f'(поле справочное, настоящая конфигурация задаётся в LEDVISION)')
+        if info['firmware_major'] >= 13:
+            print('  прошивка 13+: LEDVISION дублирует sync и яркость. '
+                  'Если кадр будет мерцать — попробуйте слать кадр дважды.')
     return 0
 
 

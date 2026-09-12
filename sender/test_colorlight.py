@@ -103,6 +103,49 @@ def test_pixels():
         check('неверный размер кадра отвергается', True)
 
 
+def _fake_reply(card_id=2, fw=(8, 44), w=160, h=80, packets=1234, uptime=56789):
+    """Синтетический ответ карты 0x08 для проверки разбора без железа."""
+    pkt = bytearray(1070)
+    pkt[0:6] = b'\xff' * 6                 # ответ широковещательный
+    pkt[6:12] = cl.REPLY_SRC_MAC
+    pkt[12] = 0x08
+    d = memoryview(pkt)[cl.DATA_OFFSET:]
+    d[0] = 0x05                             # признак карты серии 5A
+    d[2], d[3] = fw
+    d[21], d[22] = w >> 8, w & 0xFF
+    d[23], d[24] = h >> 8, h & 0xFF
+    d[38:42] = packets.to_bytes(4, 'big')
+    d[46:50] = uptime.to_bytes(4, 'big')
+    d[85] = card_id
+    return bytes(pkt)
+
+
+def test_discover_reply():
+    info = cl.parse_discover_reply(_fake_reply())
+    check('ответ карты: разобран', info is not None)
+    eq('ответ: номер карты', info['id'], 2)
+    eq('ответ: прошивка', info['firmware'], '8.44')
+    eq('ответ: ширина', info['width'], 160)
+    eq('ответ: высота', info['height'], 80)
+    eq('ответ: счётчик пакетов', info['packets'], 1234)
+    eq('ответ: аптайм', info['uptime_ms'], 56789)
+
+    check('короткий кадр отброшен', cl.parse_discover_reply(b'\x00' * 60) is None)
+
+    wrong_mac = bytearray(_fake_reply())
+    wrong_mac[6:12] = b'\xaa' * 6
+    check('чужой MAC отброшен', cl.parse_discover_reply(bytes(wrong_mac)) is None)
+
+    wrong_type = bytearray(_fake_reply())
+    wrong_type[12] = 0x55
+    check('не тот тип пакета отброшен', cl.parse_discover_reply(bytes(wrong_type)) is None)
+
+    # Наш собственный кадр данных не должен опознаваться как ответ карты.
+    big = cl.pixel_packets(bytes(600 * 3), 600, 1)[0]
+    check('свой пакет строки не принят за ответ',
+          cl.parse_discover_reply(big) is None)
+
+
 def test_frame_order():
     rgb = bytes(160 * 80 * 3)
     pkts = cl.frame_packets(rgb, 160, 80, 100)
@@ -170,7 +213,8 @@ def test_patterns():
 
 
 def main():
-    for t in (test_headers, test_pixels, test_frame_order, test_pcap, test_patterns):
+    for t in (test_headers, test_pixels, test_discover_reply, test_frame_order,
+              test_pcap, test_patterns):
         print(f'\n--- {t.__name__} ---')
         t()
     print()
