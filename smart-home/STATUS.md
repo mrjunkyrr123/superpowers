@@ -1,7 +1,7 @@
 # Текущее состояние проекта
 
 Файл для передачи контекста между сессиями Claude. Обновлять после каждого шага.
-Последнее обновление: 2026-09-05.
+Последнее обновление: 2026-09-13.
 
 ## Что решено
 
@@ -21,6 +21,28 @@ HAOS с первой USB-флешки загрузился, Supervisor подн�
 - HAOS на SD-карту через слот SD → UEFI Shell, слот не загрузочный (blk4/blk5 без fs-алиаса).
 - Та же SD-карта через USB-картридер → биос не видит.
 - HAOS на USB-флешку 16 ГБ через Etcher → биос её не видит. Причина не ясна: возможно, USB 3.0 флешка, старый биос 2017 г., или запись не прошла. Надо проверить разделы флешки на компе (`Get-Disk`, `Get-Partition` в PowerShell): у правильно записанной будет ~8 разделов, первый `hassos-boot` ~32 МБ.
+
+## Где сейчас застряли (2026-09-13)
+
+HAOS работает с USB-флешки Silicon Power 32G, сеть поднята, Observer на `:4357`
+показывает Supervisor Connected / Supported / Healthy. Пользователь создан.
+
+Проблема: интерфейс на `:8123` завис на заставке с логотипом, после `core restart`
+порт перестал отвечать совсем.
+
+Что видно в `core logs`:
+- `Start webserver on http://0.0.0.0:8123` и `Announcing http://192.168.0.100:8123` — Core стартовал
+- `Setup of stream is taking over 10 seconds`, `Waiting for integrations to complete setup: {('stream', None)}`
+- `Failed to connect to Haier Android TV DVB (192.168.0.138:8009)` — интеграция cast нашла телевизор
+- `sqlite3 database was not shutdown cleanly` — следствие выключений по питанию
+- пачка `Failed to load integration for translation: Invalid domain ...` — косметика
+
+Рабочая гипотеза: на 2 ГБ памяти Core не переживает загрузку тяжёлых интеграций
+из `default_config` (в первую очередь `stream` с ffmpeg и `cast`) и уходит в петлю
+перезапуска. Проверяется по `core info` (`state`) и по тому, начинается ли лог заново.
+
+Лечение: заменить `/homeassistant/configuration.yaml` на `haos/configuration-lowmem.yaml`,
+потом `core restart`. Полный разбор в `docs/07-troubleshooting.md`.
 
 ## Сеть (решено 2026-09-13)
 

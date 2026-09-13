@@ -1,0 +1,65 @@
+# Облегчённый configuration.yaml для PiPO X9s (Atom Z8350, 2 ГБ RAM).
+#
+# Когда нужен: HA виснет на заставке, уходит в перезапуск по кругу, или порт 8123
+# перестаёт отвечать через минуту после старта. Обычно виноват `default_config:`,
+# который тянет полтора десятка интеграций разом, в том числе тяжёлые
+# stream (ffmpeg) и cast (сканирует сеть, лезет к телевизорам).
+#
+# Здесь то же самое, но по частям и без тяжёлого. Заменить содержимое
+# /homeassistant/configuration.yaml на это, потом перезапустить HA.
+# Когда всё стабильно заработает, можно по одной возвращать закомментированные строки.
+
+# --- вместо default_config, по кускам ---
+assist_pipeline:            # голосовые ассистенты (лёгкий каркас)
+application_credentials:
+automation:  !include automations.yaml
+backup:                     # встроенные резервные копии
+bluetooth:                  # можно убрать, если BT не нужен
+config:                     # UI-редакторы настроек
+conversation:
+dhcp:                       # обнаружение устройств по DHCP
+energy:
+history:
+homeassistant_alerts:
+input_boolean:
+input_button:
+input_datetime:
+input_number:
+input_select:
+input_text:
+logbook:
+media_source:
+mobile_app:                 # приложение HA на телефоне
+my:
+person:
+schedule:
+scene:       !include scenes.yaml
+script:      !include scripts.yaml
+ssdp:                       # обнаружение по UPnP
+sun:
+system_health:
+tag:
+timer:
+usb:                        # нужно, чтобы HA видел Zigbee-стик
+webhook:
+zeroconf:                   # обнаружение по mDNS, нужно для многих устройств
+
+# --- намеренно НЕ включено ---
+# stream:      # ffmpeg для видеопотоков. Самый прожорливый. Нужен только для камер
+# cast:        # Chromecast и Android TV. Постоянно сканирует сеть
+# ffmpeg:      # то же самое, тянется вместе со stream
+# image_upload:
+# go2rtc:
+
+# История. 2 ГБ памяти и флешка — не даём базе разрастаться
+# и не пишем на диск каждую секунду.
+recorder:
+  purge_keep_days: 7
+  commit_interval: 30
+  exclude:
+    domains:
+      - update
+      - automation
+    entity_globs:
+      - sensor.*_linkquality
+      - sensor.*_last_seen
