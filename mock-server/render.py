@@ -14,6 +14,7 @@
 """
 
 import json
+import math
 import os
 import struct
 import sys
@@ -59,6 +60,24 @@ class Canvas:
             for yy in range(y, y + h):
                 self.set(x, yy, c)
                 self.set(x + w - 1, yy, c)
+
+    def round_rect(self, x, y, w, h, r, c):
+        """Скруглённый прямоугольник. Целочисленный корень — чтобы растр
+        совпадал с прошивкой бит в бит (см. fillRoundRect в gfx.cpp)."""
+        if w <= 0 or h <= 0:
+            return
+        r = max(0, min(r, min(w, h) // 2))
+        for row in range(h):
+            if r <= 0:
+                inset = 0
+            elif row < r:
+                inset = r - math.isqrt(r * r - (r - 1 - row) ** 2)
+            elif row >= h - r:
+                inset = r - math.isqrt(r * r - (row - (h - r)) ** 2)
+            else:
+                inset = 0
+            for col in range(inset, w - inset):
+                self.set(x + col, y + row, c)
 
     def line(self, x0, y0, x1, y1, c):
         dx, dy = abs(x1 - x0), -abs(y1 - y0)
@@ -118,7 +137,7 @@ def _align_x(align, x, box_w, text_w, panel_w):
     return x
 
 
-def render_page(page, t=0.0, now='12:00', w=PANEL_W, h=PANEL_H):
+def render_page(page, t=0.0, now='12:00', w=PANEL_W, h=PANEL_H, pressed=None):
     """page — один элемент массива pages. t — секунды с начала показа."""
     cv = Canvas(w, h)
     for L in page.get('layers', []):
@@ -150,6 +169,19 @@ def render_page(page, t=0.0, now='12:00', w=PANEL_W, h=PANEL_H):
                 for base in (x0 - off, x0 - off + period):
                     draw_text(cv, base, L.get('y', 0), fid, c, s,
                               clip=(x0, x0 + bw))
+        elif kind == 'button':
+            bw, bh = L.get('w', 0), L.get('h', 0)
+            fid = L.get('f', 'b24')
+            bg = parse_color(L.get('bg'), (33, 36, 41))
+            fg = c
+            if pressed and pressed == L.get('id'):
+                bg, fg = fg, bg
+            cv.round_rect(L.get('x', 0), L.get('y', 0), bw, bh, L.get('r', 8), bg)
+            label = str(L.get('s', ''))
+            ya = FONTS.get(fid, {}).get('yAdvance', 0)
+            draw_text(cv, L.get('x', 0) + (bw - text_width(fid, label)) // 2,
+                      L.get('y', 0) + (bh - ya) // 2, fid, fg, label)
+
         elif kind == 'bar':
             x, y = L.get('x', 0), L.get('y', 0)
             bw, bh = L.get('w', w), L.get('h', 3)
@@ -163,6 +195,23 @@ def render_page(page, t=0.0, now='12:00', w=PANEL_W, h=PANEL_H):
 
 # Градации яркости: без них тусклый фон прогресс-бара неотличим от заливки.
 _RAMP = ((8, '  '), (64, '░░'), (140, '▒▒'), (256, '██'))
+
+
+def hit_test(page, x, y):
+    """Кнопка под точкой касания, или None. Та же логика, что hitTest в прошивке."""
+    for L in page.get('layers', []):
+        if L.get('t') != 'button':
+            continue
+        bx, by = L.get('x', 0), L.get('y', 0)
+        bw, bh = L.get('w', 0), L.get('h', 0)
+        if bx <= x < bx + bw and by <= y < by + bh:
+            action = L.get('action') or {}
+            if not action.get('path'):
+                return None
+            return {'id': L.get('id', ''),
+                    'method': action.get('method', 'POST'),
+                    'path': action['path']}
+    return None
 
 
 def to_ascii(cv):

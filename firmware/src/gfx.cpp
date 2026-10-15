@@ -89,6 +89,36 @@ void drawRect(PixelSink &sink, int16_t x, int16_t y, int16_t w, int16_t h,
   }
 }
 
+// Целочисленный квадратный корень с округлением вниз. Намеренно не sqrtf():
+// плавающая точка дала бы расхождение с эталонным рендерером на Python.
+static uint32_t isqrt32(uint32_t n) {
+  uint32_t x = 0;
+  while ((x + 1) * (x + 1) <= n) ++x;
+  return x;
+}
+
+static int16_t roundRectInset(int16_t row, int16_t h, int16_t r) {
+  if (r <= 0) return 0;
+  int16_t dy;
+  if (row < r) dy = r - 1 - row;
+  else if (row >= h - r) dy = row - (h - r);
+  else return 0;
+  return r - static_cast<int16_t>(isqrt32(static_cast<uint32_t>(r) * r -
+                                          static_cast<uint32_t>(dy) * dy));
+}
+
+void fillRoundRect(PixelSink &sink, int16_t x, int16_t y, int16_t w, int16_t h,
+                   int16_t r, uint16_t color) {
+  if (w <= 0 || h <= 0) return;
+  const int16_t maxR = (w < h ? w : h) / 2;
+  if (r > maxR) r = maxR;
+  for (int16_t row = 0; row < h; ++row) {
+    const int16_t inset = roundRectInset(row, h, r);
+    for (int16_t col = inset; col < w - inset; ++col)
+      sink.px(x + col, y + row, color);
+  }
+}
+
 void drawLine(PixelSink &sink, int16_t x0, int16_t y0, int16_t x1, int16_t y1,
               uint16_t color) {
   const int16_t dx = abs(x1 - x0), dy = -abs(y1 - y0);

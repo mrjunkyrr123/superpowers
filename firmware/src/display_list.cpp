@@ -60,6 +60,22 @@ void renderPage(PixelSink &sink, JsonObjectConst page, const RenderCtx &ctx) {
         drawText(sink, x - off + period, y, f, c, s, x, x + boxW);
       }
 
+    } else if (!strcmp(t, "button")) {
+      const int16_t bw = L["w"] | 0, bh = L["h"] | 0;
+      const char *label = L["s"] | "";
+      const GfxFont &f = fontOr(L["f"] | "b24", FONT_B24);
+      uint16_t bg = parseColor(L["bg"] | "", 0x2124);
+      uint16_t fg = c;
+      // Нажатая кнопка рисуется инверсно: это единственная обратная связь,
+      // которую устройство даёт само, не дожидаясь ответа сервера.
+      const char *id = L["id"] | "";
+      if (ctx.pressedId && *id && !strcmp(ctx.pressedId, id)) {
+        const uint16_t tmp = bg; bg = fg; fg = tmp;
+      }
+      fillRoundRect(sink, x, y, bw, bh, L["r"] | 8, bg);
+      drawText(sink, x + (bw - textWidth(f, label)) / 2,
+               y + (bh - f.yAdvance) / 2, f, fg, label);
+
     } else if (!strcmp(t, "bar")) {
       const int16_t bw = L["w"] | ctx.w, bh = L["h"] | 3;
       drawRect(sink, x, y, bw, bh, parseColor(L["bg"] | "", 0x2104), true);
@@ -75,6 +91,22 @@ void renderPage(PixelSink &sink, JsonObjectConst page, const RenderCtx &ctx) {
   }
 
   if (ctx.stale) sink.px(ctx.w - 1, 0, parseColor("#FF0000", 0xF800));
+}
+
+bool hitTest(JsonObjectConst page, int16_t x, int16_t y, ButtonHit &out) {
+  for (JsonObjectConst L : page["layers"].as<JsonArrayConst>()) {
+    if (strcmp(L["t"] | "", "button")) continue;
+    const int16_t bx = L["x"] | 0, by = L["y"] | 0;
+    const int16_t bw = L["w"] | 0, bh = L["h"] | 0;
+    if (x < bx || y < by || x >= bx + bw || y >= by + bh) continue;
+
+    JsonObjectConst a = L["action"];
+    out.id = L["id"] | "";
+    out.method = a["method"] | "POST";
+    out.path = a["path"] | nullptr;
+    return out.path != nullptr;   // кнопка без пути ничего не делает
+  }
+  return false;
 }
 
 void renderStatus(PixelSink &sink, const RenderCtx &ctx, const char *line1,

@@ -10,6 +10,7 @@
 Маршруты:
     GET  /api/display/<id>            display list, ETag + If-None-Match
     POST /api/display/<id>/heartbeat  телеметрия устройства, пишется в лог
+    POST /api/<что угодно>            действие кнопки, пишется в лог
     GET  /preview.png                 все страницы одной картинкой
     GET  /                            короткая справка
 
@@ -22,6 +23,11 @@ import hashlib
 import json
 import os
 import time
+
+# Раскладка под сенсорную панель 480x480. Лежит файлом, а не в коде: менять
+# внешний вид экрана можно, не трогая сервер, — в этом и смысл display list.
+LAYOUT = 'sample-480x480.json'
+_pressed = []   # журнал нажатий, чтобы было видно, что кнопки доходят
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import render
@@ -34,7 +40,8 @@ def build_display_list():
     """Здесь боевой бэкенд подставит реальные данные из админки.
 
     Смысл этой функции — показать, что вёрстка собирается на сервере: прошивка
-    ни про «свободные места», ни про «переговорки» ничего не знает.
+    ни про «свободные места», ни про «переговорки» ничего не знает. Она же
+    решает, какие кнопки показать и что каждая из них делает.
     """
     minute = int(time.time() // 60)
     free = 3 + minute % 12          # что-нибудь меняющееся
@@ -42,6 +49,20 @@ def build_display_list():
     occupancy = 1.0 - free / total
 
     colour = "#00FF88" if free > 6 else "#FFAA00" if free > 2 else "#FF3355"
+
+    path = os.path.join(HERE, LAYOUT)
+    if os.path.exists(path):
+        with open(path, encoding='utf-8') as fh:
+            doc = json.load(fh)
+        # Подставляем живые значения в заготовленную раскладку.
+        for L in doc['pages'][0]['layers']:
+            if L.get('f') == 'b48':
+                L['s'], L['c'] = str(free), colour
+            elif L.get('f') == 'r28' and 'свободно' in str(L.get('s', '')):
+                L['s'] = f'из {total} свободно'
+            elif L.get('t') == 'bar':
+                L['p'] = round(occupancy, 2)
+        return doc
 
     return {
         "v": 1,
@@ -120,7 +141,11 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split('?')[0]
 
         if path == '/':
-            return self._send(200, __doc__.encode('utf-8'))
+            txt = __doc__
+            if _pressed:
+                txt += '\n\nПоследние нажатия:\n' + '\n'.join(
+                    f'  {t}  {p}  {b}' for t, p, b in _pressed[-10:])
+            return self._send(200, txt.encode('utf-8'))
 
         if path == '/preview.png':
             doc = build_display_list()
@@ -169,6 +194,23 @@ class Handler(BaseHTTPRequestHandler):
                 hb = {'raw': raw[:120].decode('utf-8', 'replace')}
             print('  heartbeat %s: %s' % (parts[2], hb))
             return self._send(204)
+
+        # Действие кнопки. Устройство шлёт путь, который ему прислал сервер,
+        # подставив собственный базовый адрес — произвольный хост оно позвать
+        # не может по построению.
+        if parts and parts[0] == 'api':
+            if not self._authorised():
+                return self._send(401, b'unauthorised')
+            n = int(self.headers.get('Content-Length') or 0)
+            raw = self.rfile.read(n) if n else b'{}'
+            try:
+                body = json.loads(raw)
+            except ValueError:
+                body = {'raw': raw[:120].decode('utf-8', 'replace')}
+            _pressed.append((time.strftime('%H:%M:%S'), self.path, body))
+            print('  НАЖАТИЕ %s: %s' % (self.path, body))
+            return self._send(204)
+
         self._send(404, b'not found')
 
 

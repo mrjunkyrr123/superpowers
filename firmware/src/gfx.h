@@ -26,6 +26,12 @@ void drawText(PixelSink &sink, int16_t x, int16_t yTop, const GfxFont &f,
 
 void drawRect(PixelSink &sink, int16_t x, int16_t y, int16_t w, int16_t h,
               uint16_t color, bool filled);
+
+// Скруглённый прямоугольник — основа кнопок на сенсорном экране.
+// Радиус задаётся целым числом, смещение считается целочисленным корнем:
+// это гарантирует, что прошивка и серверное превью дадут один и тот же растр.
+void fillRoundRect(PixelSink &sink, int16_t x, int16_t y, int16_t w, int16_t h,
+                   int16_t r, uint16_t color);
 void drawLine(PixelSink &sink, int16_t x0, int16_t y0, int16_t x1, int16_t y1,
               uint16_t color);
 

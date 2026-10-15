@@ -262,11 +262,19 @@ CHARSET = ([chr(c) for c in range(0x20, 0x7F)] +
 
 DEJAVU = '/usr/share/fonts/truetype/dejavu'
 
+# Мелкие кегли остались от панели 64x32 — на ней они были единственным
+# вариантом. Крупные добавлены под экран 480x480: при 0,15 мм на пиксель
+# шрифт 32 px даёт букву ~4,8 мм, это комфортно читается с полутора метров.
 FONTS = [
     ('f5',  'hand', None, 0),
     ('r12', 'ttf', f'{DEJAVU}/DejaVuSans.ttf', 12),
     ('b13', 'ttf', f'{DEJAVU}/DejaVuSans-Bold.ttf', 13),
     ('b16', 'ttf', f'{DEJAVU}/DejaVuSans-Bold.ttf', 16),
+    ('r20', 'ttf', f'{DEJAVU}/DejaVuSans.ttf', 20),
+    ('r28', 'ttf', f'{DEJAVU}/DejaVuSans.ttf', 28),
+    ('b24', 'ttf', f'{DEJAVU}/DejaVuSans-Bold.ttf', 24),
+    ('b32', 'ttf', f'{DEJAVU}/DejaVuSans-Bold.ttf', 32),
+    ('b48', 'ttf', f'{DEJAVU}/DejaVuSans-Bold.ttf', 48),
 ]
 
 
