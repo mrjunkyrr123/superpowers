@@ -12,3 +12,4 @@ firmware/src/secrets.h
 firmware/test/host_render
 mock-server/.preview.png
 __pycache__/
+**/.pio/
