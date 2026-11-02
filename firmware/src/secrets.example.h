@@ -20,7 +20,7 @@
 
 #define FW_VERSION         "1.0.0"
 
-// Пароль OTA (pio run -t upload --upload-port <ip>).
+// Пароль OTA (pio run -t upload --upload-port <ip>). Пусто — OTA выключено.
 #define OTA_PASSWORD       "change-me"
 
 // TLS. 1 — сертификат сервера НЕ проверяется: допустимо только в доверенной

@@ -15,6 +15,12 @@ bool netOnline();
 // body/etag заполняются только при Fetch::Updated.
 Fetch fetchDisplayList(const Config &c, String &body, String &etag);
 
+// Действие кнопки: method на <url из настроек><path> с токеном устройства.
+// path обязан начинаться с одного '/', иначе запрос не уходит. Возвращает
+// HTTP-код или -1, если не отправлено.
+int sendAction(const Config &c, const char *method, const char *path,
+               const char *buttonId);
+
 // Телеметрия в админку. Ошибки игнорируются: heartbeat не должен мешать показу.
 void sendHeartbeat(const Config &c, const String &etag, uint32_t uptimeSec);
 

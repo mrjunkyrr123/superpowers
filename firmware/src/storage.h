@@ -21,5 +21,11 @@ void configConsole(Config &c);
 bool cacheLoad(String &json, String &etag);
 void cacheSave(const String &json, const String &etag);
 
-// Ограничение NVS на одну строку. Ответ длиннее просто не кэшируется.
-static const size_t CACHE_MAX = 3500;
+// Где кэш: по умолчанию в NVS (табло HUB75, ответ маленький), с флагом
+// сборки CACHE_LITTLEFS — файлом во флеш (панель 480x480, ответ ~14 КБ).
+// Ответ длиннее CACHE_MAX просто не кэшируется.
+#ifdef CACHE_LITTLEFS
+static const size_t CACHE_MAX = 128 * 1024;
+#else
+static const size_t CACHE_MAX = 3500;   // ограничение NVS на одну строку
+#endif

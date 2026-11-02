@@ -13,3 +13,5 @@ firmware/test/host_render
 mock-server/.preview.png
 __pycache__/
 **/.pio/
+
+firmware/test/host_render.exe

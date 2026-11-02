@@ -1,5 +1,9 @@
-// Панель 480x480 на Guition 4848S040: дашборд RECOROOM. Пока без сети —
-// раскладка зашита в прошивку (layout_embedded.h).
+// Панель 480x480 на Guition 4848S040: дашборд RECOROOM.
+//
+// Раскладка (display list) приходит с сервера и кэшируется во флеш: после
+// перезагрузки без сети на экране последние известные данные, а не пустота.
+// Без настроек сети (ssid/url в NVS пусты) показывается демо из
+// layout_embedded.h с меткой «нет связи» — цифры в нём ненастоящие.
 //
 // Кадр собирается в теневом буфере в PSRAM и уходит на экран целиком —
 // по пикселю в живой кадровый буфер было бы медленно и с мерцанием.
@@ -10,8 +14,14 @@
 #include "layout_embedded.h"
 #include "display_list.h"
 #include "gfx.h"
+#include "net.h"
+#include "secrets.h"
+#include "storage.h"
 
-static const uint32_t FRAME_MS = 40;   // для бегущей строки; без неё — по событию
+static const uint32_t FRAME_MS          = 40;   // для бегущей строки; без неё — по событию
+static const uint32_t DEFAULT_POLL      = 20;   // секунд, если сервер не сказал иначе
+static const uint32_t HEARTBEAT_MS      = 60UL * 1000;
+static const uint32_t NO_DATA_REBOOT_MS = 20UL * 60 * 1000;
 
 static uint16_t *frame = nullptr;
 
@@ -34,10 +44,23 @@ struct FrameSink : PixelSink {
 };
 static FrameSink sink;
 
+static Config       cfg;
 static JsonDocument doc;
+static String       etag;
+static bool     haveData  = false;
+static bool     demo      = false;   // показываем зашитое демо, сети нет вовсе
 static uint8_t  pageIdx   = 0;
 static uint32_t pageStart = 0;
 static bool     dirty     = true;
+
+static uint32_t bootMs   = 0;
+static uint32_t lastPoll = 0, lastBeat = 0;
+static uint32_t lastOkMs = 0;        // 0 — с сервера ещё ничего не приходило
+static uint32_t pollMs   = DEFAULT_POLL * 1000;
+
+static int  brightness = 70, litBrightness = -1;
+static char clockBuf[8] = "--:--";
+static bool staleShown  = false;
 
 // Полосы экрана с бегущими строками, которые не влезают по ширине и потому
 // движутся. Между полными перерисовками обновляются только они.
@@ -45,17 +68,17 @@ struct Band { int16_t y0, y1; };
 static Band    bands[8];
 static uint8_t bandCount = 0;
 
-// Кнопка под пальцем. Копия id, а не указатель: в шаге B документ будет
-// меняться по ответу сервера, пока палец ещё на экране.
-static char      pressedId[32] = "";
-static ButtonHit pressedHit;
+// Кнопка под пальцем. Всё копией, а не указателями в документ: ответ сервера
+// может заменить документ, пока палец ещё на экране.
+static char pressedId[32]     = "";
+static char pressedMethod[8]  = "";
+static char pressedPath[128]  = "";
 
 static JsonObjectConst currentPage() {
   return doc["pages"][pageIdx].as<JsonObjectConst>();
 }
 
-static void onPageChanged() {
-  pageStart = millis();
+static void refreshBands() {
   bandCount = 0;
   for (JsonObjectConst L : currentPage()["layers"].as<JsonArrayConst>()) {
     if (strcmp(L["t"] | "", "scroll")) continue;
@@ -65,6 +88,11 @@ static void onPageChanged() {
     const int16_t y = L["y"] | 0;
     bands[bandCount++] = {y, static_cast<int16_t>(y + f->yAdvance)};
   }
+}
+
+static void onPageChanged() {
+  pageStart = millis();
+  refreshBands();
   pressedId[0] = '\0';
   dirty = true;
 }
@@ -75,8 +103,59 @@ static uint32_t holdUntil = 0;          // 0 — автосмена идёт к�
 
 static void turnPage(int delta) {
   const int n = doc["pages"].size();
+  if (!n) return;
   pageIdx = (pageIdx + delta + n) % n;
   onPageChanged();
+}
+
+// Разбирает display list. false — JSON битый или пустой: тогда на экране
+// остаётся то, что было, а не пустота.
+static bool applyBody(const char *json) {
+  JsonDocument fresh;
+  const DeserializationError err = deserializeJson(fresh, json);
+  if (err) {
+    Serial.printf("JSON: %s\n", err.c_str());
+    return false;
+  }
+  if (!fresh["pages"].is<JsonArray>() || fresh["pages"].size() == 0) {
+    Serial.println(F("JSON: нет непустого массива pages"));
+    return false;
+  }
+
+  const size_t oldPages = haveData ? doc["pages"].size() : 0;
+  doc = std::move(fresh);
+  haveData = true;
+
+  // Те же экраны с новыми цифрами — остаёмся, где были, и не сбрасываем
+  // ни паузу после свайпа, ни бегущую строку. Другое число экранов — с начала.
+  if (doc["pages"].size() == oldPages) {
+    refreshBands();
+    dirty = true;
+  } else {
+    pageIdx = 0;
+    holdUntil = 0;
+    onPageChanged();
+  }
+
+  const uint32_t poll = doc["poll_interval"] | DEFAULT_POLL;
+  pollMs = constrain(poll, 5UL, 3600UL) * 1000;
+  brightness = constrain(doc["brightness"] | 70, 5, 100);
+  return true;
+}
+
+static void poll() {
+  String body;
+  const Fetch r = fetchDisplayList(cfg, body, etag);
+  if (r == Fetch::Updated) {
+    if (applyBody(body.c_str())) {
+      cacheSave(body, etag);
+      lastOkMs = millis();
+      Serial.printf("данные обновлены: %u байт, %u экр.\n", (unsigned)body.length(),
+                    (unsigned)doc["pages"].size());
+    }
+  } else if (r == Fetch::NotModified) {
+    lastOkMs = millis();
+  }
 }
 
 // dwell 0 или одна страница — ротации нет.
@@ -92,6 +171,20 @@ static void rotate() {
   if (dwell && millis() - pageStart >= dwell) turnPage(+1);
 }
 
+static void draw();
+
+static void pressButton(const char *id) {
+  Serial.printf("кнопка %s -> %s %s\n", id, pressedMethod, pressedPath);
+  if (demo) {
+    Serial.println(F("  демо без сети — никуда не отправлено"));
+    return;
+  }
+  const int code = sendAction(cfg, pressedMethod, pressedPath, id);
+  Serial.printf("  ответ сервера: %d\n", code);
+  // Сервер мог поменять экран в ответ на нажатие — переспросим сразу.
+  if (code >= 200 && code < 300) lastPoll = millis() - pollMs;
+}
+
 // Жест: сдвиг больше SLOP — уже не нажатие, кнопка гаснет; при отпускании
 // сдвиг по горизонтали от SWIPE_MIN и вдвое больше вертикального — листание.
 static const int16_t SLOP = 24, SWIPE_MIN = 80;
@@ -101,6 +194,7 @@ static int16_t startX, startY, lastX, lastY;
 static void handleTouch() {
   int16_t x, y;
   const Touch t = touchRead(x, y);
+  if (!haveData) return;
   if (t == Touch::Down) {
     if (!fingerDown) {
       fingerDown = true;
@@ -116,7 +210,10 @@ static void handleTouch() {
     const char *id = !moved && hitTest(currentPage(), x, y, hit) ? hit.id : "";
     if (strcmp(id, pressedId)) {      // палец зашёл на кнопку, ушёл с неё или поехал
       strlcpy(pressedId, id, sizeof(pressedId));
-      pressedHit = hit;
+      if (*id) {
+        strlcpy(pressedMethod, hit.method, sizeof(pressedMethod));
+        strlcpy(pressedPath, hit.path, sizeof(pressedPath));
+      }
       dirty = true;
     }
   } else if (t == Touch::Up && fingerDown) {
@@ -129,21 +226,30 @@ static void handleTouch() {
       Serial.printf("свайп %s -> экран %u\n", dx < 0 ? "влево" : "вправо", pageIdx + 1);
     } else if (pressedId[0]) {
       // Срабатывает при отпускании над кнопкой: увёл палец — передумал.
-      Serial.printf("кнопка %s -> %s %s (отправка на сервер — шаг B)\n", pressedId,
-                    pressedHit.method, pressedHit.path);
+      // Сначала гасим подсветку, потом шлём: запрос может занять секунды.
+      char id[sizeof(pressedId)];
+      strlcpy(id, pressedId, sizeof(id));
       pressedId[0] = '\0';
-      dirty = true;
+      draw();
+      pressButton(id);
     }
   }
+}
+
+// Данные не свежие: демо, ничего не приходило или давно нет ответа.
+static bool isStale() {
+  if (demo) return true;
+  return !lastOkMs || millis() - lastOkMs > 2 * pollMs;
 }
 
 static RenderCtx makeCtx() {
   RenderCtx ctx;
   ctx.w = SCREEN_W;
   ctx.h = SCREEN_H;
-  ctx.clockStr = "--:--";              // часов без сети нет, NTP — шаг B
+  ctx.clockStr = clockBuf;
   ctx.pageElapsedMs = millis() - pageStart;
   ctx.pressedId = pressedId[0] ? pressedId : nullptr;
+  ctx.stale = staleShown;
   return ctx;
 }
 
@@ -161,10 +267,22 @@ static void draw() {
   const uint32_t t0 = millis();
   sink.y0 = 0;
   sink.y1 = SCREEN_H;
-  renderPage(sink, currentPage(), makeCtx());
+  const RenderCtx ctx = makeCtx();
+  if (haveData) {
+    renderPage(sink, currentPage(), ctx);
+  } else {
+    const bool online = netOnline();
+    renderStatus(sink, ctx, online ? "НЕТ ДАННЫХ" : "НЕТ СЕТИ",
+                 online ? cfg.url.c_str() : cfg.ssid.c_str());
+  }
   const uint32_t t1 = millis();
   present(frame);
-  report(false, t1 - t0, millis() - t1);
+  if (haveData) report(false, t1 - t0, millis() - t1);
+  // Свет — после кадра: при включении не будет вспышки мусора.
+  if (brightness != litBrightness) {
+    backlight(brightness);
+    litBrightness = brightness;
+  }
 }
 
 // Только полосы с бегущими строками. Страница проходится целиком, но в память
@@ -184,10 +302,26 @@ static void drawBands() {
   report(true, renderMs, millis() - t0 - renderMs);
 }
 
+static void showStatus(const char *line1, const char *line2) {
+  RenderCtx ctx;
+  ctx.w = SCREEN_W;
+  ctx.h = SCREEN_H;
+  sink.y0 = 0;
+  sink.y1 = SCREEN_H;
+  renderStatus(sink, ctx, line1, line2);
+  present(frame);
+  if (litBrightness < 0) {
+    backlight(brightness);
+    litBrightness = brightness;
+  }
+}
+
 void setup() {
   Serial.begin(115200);
+  Serial.setTimeout(200);              // строка конфигурации с Serial не держит экран
   delay(300);
-  Serial.println("\n=== panel-4848: дашборд, раскладка без сети ===");
+  Serial.println(F("\n=== panel-4848: дашборд " FW_VERSION " ==="));
+  bootMs = millis();
 
   frame = static_cast<uint16_t *>(
       heap_caps_malloc(SCREEN_W * SCREEN_H * sizeof(uint16_t), MALLOC_CAP_SPIRAM));
@@ -196,32 +330,83 @@ void setup() {
     while (true) delay(1000);
   }
 
-  const DeserializationError err = deserializeJson(doc, EMBEDDED_LAYOUT);
-  if (err || doc["pages"].size() == 0) {
-    Serial.printf("ОШИБКА: раскладка не разобралась: %s\n", err.c_str());
-    while (true) delay(1000);
-  }
-  Serial.printf("раскладка: %u стр.\n", (unsigned)doc["pages"].size());
+  loadConfig(cfg);
 
-  onPageChanged();
-  draw();
-  dirty = false;
-  backlight(doc["brightness"] | 70);   // свет — после первого кадра, без вспышки мусора
+  if (!cfg.valid()) {
+    demo = true;
+    Serial.println(F("нет настроек сети — демо без сети. Команда show — справка"));
+    if (!applyBody(EMBEDDED_LAYOUT)) {
+      Serial.println(F("ОШИБКА: зашитая раскладка не разобралась"));
+      while (true) delay(1000);
+    }
+  } else {
+    // Кэш — до сети: если Wi-Fi не поднимется, покажем последние данные.
+    String cached, cachedEtag;
+    if (cacheLoad(cached, cachedEtag) && applyBody(cached.c_str())) {
+      etag = cachedEtag;
+      Serial.printf("восстановлен кэш: %u байт\n", (unsigned)cached.length());
+    }
+    if (!haveData) showStatus("ПОДКЛЮЧЕНИЕ", cfg.ssid.c_str());
+    else draw();
+
+    netBegin(cfg);
+    poll();
+    lastPoll = lastBeat = millis();
+  }
+
+  char t[8];
+  localTimeStr(t, sizeof(t));
+  strlcpy(clockBuf, t, sizeof(clockBuf));
+  staleShown = isStale();
+  dirty = true;
 }
 
 void loop() {
   static uint32_t lastFrame = 0;
+  configConsole(cfg);
+
+  const uint32_t now = millis();
+  if (!demo) {
+    netLoop();
+    if (now - lastPoll >= pollMs) { lastPoll = now; poll(); }
+    if (now - lastBeat >= HEARTBEAT_MS) {
+      lastBeat = now;
+      sendHeartbeat(cfg, etag, now / 1000);
+    }
+    // Чаще всего «зависает» не процессор, а сетевой стек — перезагрузка
+    // единственное, что это лечит без выезда на объект.
+    if (millis() - (lastOkMs ? lastOkMs : bootMs) > NO_DATA_REBOOT_MS) {
+      Serial.println(F("нет данных слишком долго — перезагрузка"));
+      ESP.restart();
+    }
+  }
+
   handleTouch();
   rotate();
 
-  const uint32_t now = millis();
+  // Часы и метка «нет связи» меняются редко — перерисовка только по факту.
+  char t[8];
+  localTimeStr(t, sizeof(t));
+  if (strcmp(t, clockBuf)) {
+    strlcpy(clockBuf, t, sizeof(clockBuf));
+    dirty = true;
+  }
+  const bool stale = isStale();
+  if (stale != staleShown) {
+    staleShown = stale;
+    dirty = true;
+  }
+  // Экран-заглушка ловит появление сети раз в секунду.
+  if (!haveData && millis() - lastFrame >= 1000) dirty = true;
+
+  const uint32_t t0 = millis();
   if (dirty) {
-    draw();
     dirty = false;
-    lastFrame = now;
-  } else if (bandCount && now - lastFrame >= FRAME_MS) {
+    draw();
+    lastFrame = t0;
+  } else if (haveData && bandCount && t0 - lastFrame >= FRAME_MS) {
     drawBands();
-    lastFrame = now;
+    lastFrame = t0;
   }
   delay(10);
 }

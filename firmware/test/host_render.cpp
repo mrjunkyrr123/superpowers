@@ -9,6 +9,27 @@
 #include <cstring>
 #include <vector>
 #include "gfx.h"
+#ifdef _WIN32
+#include <windows.h>
+#include <shellapi.h>
+#include <string>
+
+// На Windows argv приходит в кодовой странице ANSI (cp1251), и кириллица
+// превращается в '?'. Берём аргумент из UTF-16 командной строки и сами
+// переводим в UTF-8 — в той кодировке строки живут в прошивке.
+static std::string argUtf8(int i) {
+  int n = 0;
+  LPWSTR *w = CommandLineToArgvW(GetCommandLineW(), &n);
+  std::string out;
+  if (w && i < n) {
+    const int len = WideCharToMultiByte(CP_UTF8, 0, w[i], -1, nullptr, 0, nullptr, nullptr);
+    out.resize(len > 0 ? len - 1 : 0);
+    if (len > 1) WideCharToMultiByte(CP_UTF8, 0, w[i], -1, &out[0], len, nullptr, nullptr);
+  }
+  LocalFree(w);
+  return out;
+}
+#endif
 
 struct Buf : PixelSink {
   int w, h;
@@ -27,8 +48,14 @@ int main(int argc, char **argv) {
     const GfxFont *f = fontByName(argv[2]);
     if (!f) { fprintf(stderr, "unknown font %s\n", argv[2]); return 2; }
     Buf b(atoi(argv[3]), atoi(argv[4]));
-    drawText(b, 0, 0, *f, 1, argv[5]);
-    printf("width=%d\n", textWidth(*f, argv[5]));
+#ifdef _WIN32
+    const std::string text = argUtf8(5);
+    const char *s = text.c_str();
+#else
+    const char *s = argv[5];
+#endif
+    drawText(b, 0, 0, *f, 1, s);
+    printf("width=%d\n", textWidth(*f, s));
     b.dump();
     return 0;
   }

@@ -10,6 +10,8 @@
 static bool timeSynced = false;
 static uint32_t lastReconnectMs = 0;
 
+static bool otaEnabled() { return OTA_PASSWORD[0] != '\0'; }
+
 static String endpoint(const Config &c, const char *suffix) {
   String u = c.url;
   while (u.endsWith("/")) u.remove(u.length() - 1);
@@ -39,13 +41,19 @@ bool netBegin(const Config &c) {
   setenv("TZ", TZ_INFO, 1);
   tzset();
 
-  ArduinoOTA.setPassword(OTA_PASSWORD);
-  ArduinoOTA.begin();
+  // OTA без пароля — это прошивка для любого в той же сети. Пустой пароль
+  // значит «OTA выключено», а не «OTA без пароля».
+  if (otaEnabled()) {
+    ArduinoOTA.setPassword(OTA_PASSWORD);
+    ArduinoOTA.begin();
+  } else {
+    Serial.println(F("OTA выключено: OTA_PASSWORD пуст"));
+  }
   return true;
 }
 
 void netLoop() {
-  ArduinoOTA.handle();
+  if (otaEnabled()) ArduinoOTA.handle();
   // WiFi.setAutoReconnect не всегда вытаскивает из зависшего состояния,
   // поэтому раз в 30 с пинаем стек вручную.
   if (!netOnline() && millis() - lastReconnectMs > 30000) {
@@ -117,6 +125,39 @@ Fetch fetchDisplayList(const Config &c, String &body, String &etag) {
   }
   http.end();
   return result;
+}
+
+int sendAction(const Config &c, const char *method, const char *path,
+               const char *buttonId) {
+  // Только путь от корня: "//host" или "@host" после базового адреса увели
+  // бы запрос на чужой сервер вместе с токеном.
+  if (!path || path[0] != '/' || path[1] == '/' || strchr(path, '@')) {
+    Serial.printf("действие: отклонён путь %s\n", path ? path : "(нет)");
+    return -1;
+  }
+  if (!netOnline()) return -1;
+
+  String url = c.url;
+  while (url.endsWith("/")) url.remove(url.length() - 1);
+  url += path;
+
+  JsonDocument doc;
+  doc["button"] = buttonId ? buttonId : "";
+  doc["screen"] = c.screenId;
+  String payload;
+  serializeJson(doc, payload);
+
+  WiFiClientSecure tls;
+  WiFiClient plain;
+  HTTPClient http;
+  http.setTimeout(5000);
+  http.setReuse(false);
+  if (!beginRequest(http, tls, plain, url)) return -1;
+  if (c.token.length()) http.addHeader("Authorization", "Bearer " + c.token);
+  http.addHeader("Content-Type", "application/json");
+  const int code = http.sendRequest(method && *method ? method : "POST", payload);
+  http.end();
+  return code;
 }
 
 void sendHeartbeat(const Config &c, const String &etag, uint32_t uptimeSec) {

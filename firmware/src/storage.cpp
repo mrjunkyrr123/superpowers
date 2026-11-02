@@ -1,5 +1,8 @@
 #include "storage.h"
 #include <Preferences.h>
+#ifdef CACHE_LITTLEFS
+#include <LittleFS.h>
+#endif
 #include "secrets.h"
 
 static Preferences prefs;
@@ -24,6 +27,52 @@ void saveConfig(const Config &c) {
   prefs.end();
 }
 
+#ifdef CACHE_LITTLEFS
+// Раскладка 480x480 весит ~14 КБ и в строку NVS не влезает — кэш в файле.
+// Сначала пишем во временный файл, потом переименовываем: обрыв питания
+// посреди записи не оставит битый кэш.
+static bool fsReady() {
+  static int state = -1;                 // -1 не пробовали, 0 нет, 1 есть
+  if (state < 0) {
+    state = LittleFS.begin(true) ? 1 : 0;  // true — отформатировать при первом запуске
+    if (!state) Serial.println(F("LittleFS: не смонтировался, кэша не будет"));
+  }
+  return state == 1;
+}
+
+static bool readFile(const char *path, String &out) {
+  File f = LittleFS.open(path, "r");
+  if (!f) return false;
+  out = f.readString();
+  f.close();
+  return true;
+}
+
+static bool writeFile(const char *path, const String &data) {
+  const String tmp = String(path) + ".tmp";
+  File f = LittleFS.open(tmp, "w");
+  if (!f) return false;
+  const size_t n = f.print(data);
+  f.close();
+  if (n != data.length()) { LittleFS.remove(tmp); return false; }
+  LittleFS.remove(path);
+  return LittleFS.rename(tmp, path);
+}
+
+bool cacheLoad(String &json, String &etag) {
+  if (!fsReady() || !readFile("/cache.json", json)) return false;
+  if (!readFile("/cache.etag", etag)) etag = "";
+  return json.length() > 0;
+}
+
+void cacheSave(const String &json, const String &etag) {
+  if (json.length() > CACHE_MAX || !fsReady()) return;
+  // ETag пишем первым и пустым: если упадём между файлами, кэш просто
+  // перезапросится целиком, а не примет старое тело за новое.
+  writeFile("/cache.etag", "");
+  if (writeFile("/cache.json", json)) writeFile("/cache.etag", etag);
+}
+#else
 bool cacheLoad(String &json, String &etag) {
   prefs.begin("hub75", true);
   json = prefs.getString("cache", "");
@@ -39,6 +88,7 @@ void cacheSave(const String &json, const String &etag) {
   prefs.putString("cetag", etag);
   prefs.end();
 }
+#endif
 
 static void printConfig(const Config &c) {
   Serial.println(F("--- конфигурация ---"));

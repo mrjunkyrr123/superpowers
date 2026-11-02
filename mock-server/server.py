@@ -6,6 +6,7 @@
 
     python3 mock-server/server.py               # порт 8080, без токена
     python3 mock-server/server.py --port 9000 --token secret
+    python3 mock-server/server.py --layout dashboard-480x480.json
 
 Маршруты:
     GET  /api/display/<id>            display list, ETag + If-None-Match
@@ -56,8 +57,15 @@ def build_display_list():
             doc = json.load(fh)
         # Подставляем живые значения в заготовленную раскладку.
         for L in doc['pages'][0]['layers']:
+            if L.get('f') != 'b48' and LAYOUT != 'sample-480x480.json':
+                continue
             if L.get('f') == 'b48':
-                L['s'], L['c'] = str(free), colour
+                if LAYOUT == 'sample-480x480.json':
+                    L['s'], L['c'] = str(free), colour
+                else:
+                    # Дашборд: крупная цифра первого экрана меняется раз в
+                    # минуту — видно, что плата подхватывает новые данные.
+                    L['s'] = f'{38000 + minute % 60 * 7:,}'.replace(',', ' ')
             elif L.get('f') == 'r28' and 'свободно' in str(L.get('s', '')):
                 L['s'] = f'из {total} свободно'
             elif L.get('t') == 'bar':
@@ -215,12 +223,16 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global TOKEN
+    global TOKEN, LAYOUT
     ap = argparse.ArgumentParser()
     ap.add_argument('--port', type=int, default=8080)
     ap.add_argument('--token', default=os.environ.get('DISPLAY_TOKEN', ''))
+    ap.add_argument('--layout', default=LAYOUT,
+                    help='файл раскладки рядом с server.py, например '
+                         'dashboard-480x480.json')
     args = ap.parse_args()
     TOKEN = args.token or None
+    LAYOUT = args.layout
 
     srv = ThreadingHTTPServer(('0.0.0.0', args.port), Handler)
     print('мок админки на http://0.0.0.0:%d' % args.port)

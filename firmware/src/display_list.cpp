@@ -1,6 +1,10 @@
 #include "display_list.h"
 #include <string.h>
 
+// С этой ширины экран считается «большим» (панель 480x480): служебные
+// надписи крупнее. Табло HUB75 64x32 рисуется как раньше.
+static const int16_t BIG_SCREEN_W = 128;
+
 static const GfxFont &fontOr(const char *name, const GfxFont &fallback) {
   const GfxFont *f = fontByName(name);
   return f ? *f : fallback;
@@ -90,7 +94,20 @@ void renderPage(PixelSink &sink, JsonObjectConst page, const RenderCtx &ctx) {
     // Неизвестный примитив — пропускаем.
   }
 
-  if (ctx.stale) sink.px(ctx.w - 1, 0, parseColor("#FF0000", 0xF800));
+  if (!ctx.stale) return;
+  const uint16_t red = parseColor("#FF0000", 0xF800);
+  if (ctx.w < BIG_SCREEN_W) {
+    sink.px(ctx.w - 1, 0, red);           // на табло 64x32 места нет — одна точка
+    return;
+  }
+  // На большом экране — читаемая плашка в левом нижнем углу, на чёрной
+  // подложке, чтобы не сливалась с вёрсткой под ней.
+  const char *label = "НЕТ СВЯЗИ";
+  const GfxFont &f = FONT_R12;
+  const int16_t pad = 6, tw = textWidth(f, label);
+  const int16_t bh = f.yAdvance + 2 * pad, by = ctx.h - bh - 4;
+  fillRoundRect(sink, 4, by, tw + 2 * pad, bh, 4, 0);
+  drawText(sink, 4 + pad, by + pad, f, red, label);
 }
 
 bool hitTest(JsonObjectConst page, int16_t x, int16_t y, ButtonHit &out) {
@@ -113,9 +130,13 @@ void renderStatus(PixelSink &sink, const RenderCtx &ctx, const char *line1,
                   const char *line2) {
   drawRect(sink, 0, 0, ctx.w, ctx.h, 0, true);
   const uint16_t grey = parseColor("#606060", 0x6B4D);
-  const int16_t y1 = ctx.h / 2 - FONT_F5.yAdvance;
-  drawText(sink, (ctx.w - textWidth(FONT_F5, line1)) / 2, y1, FONT_F5, grey, line1);
+  // 5 px читается на табло 64x32, а на 480x480 — уже нет.
+  const bool big = ctx.w >= BIG_SCREEN_W;
+  const GfxFont &f1 = big ? FONT_B24 : FONT_F5;
+  const GfxFont &f2 = big ? FONT_R20 : FONT_F5;
+  const int16_t y1 = ctx.h / 2 - f1.yAdvance;
+  drawText(sink, (ctx.w - textWidth(f1, line1)) / 2, y1, f1, grey, line1);
   if (line2 && *line2)
-    drawText(sink, (ctx.w - textWidth(FONT_F5, line2)) / 2,
-             y1 + FONT_F5.yAdvance, FONT_F5, grey, line2);
+    drawText(sink, (ctx.w - textWidth(f2, line2)) / 2,
+             y1 + f1.yAdvance + (big ? 8 : 0), f2, grey, line2);
 }
