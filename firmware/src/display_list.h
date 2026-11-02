@@ -9,6 +9,7 @@ struct RenderCtx {
   int16_t w = 64, h = 32;
   bool stale = false;           // данные устарели: рисуем метку в углу
   const char *pressedId = nullptr;  // кнопка под пальцем — рисуется инверсно
+  int8_t wifi = -1;             // примитив "wifi": дуг 0..3, -1 — нет связи
 };
 
 // Рисует одну страницу display list. Неизвестные типы примитивов молча

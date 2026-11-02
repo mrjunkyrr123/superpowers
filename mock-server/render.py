@@ -137,8 +137,9 @@ def _align_x(align, x, box_w, text_w, panel_w):
     return x
 
 
-def render_page(page, t=0.0, now='12:00', w=PANEL_W, h=PANEL_H, pressed=None):
-    """page — один элемент массива pages. t — секунды с начала показа."""
+def render_page(page, t=0.0, now='12:00', w=PANEL_W, h=PANEL_H, pressed=None, wifi=2):
+    """page — один элемент массива pages. t — секунды с начала показа.
+    wifi — сколько дуг на значке Wi-Fi (0..3, -1 — нет связи); на плате — по сигналу."""
     cv = Canvas(w, h)
     for L in page.get('layers', []):
         kind = L.get('t')
@@ -190,7 +191,33 @@ def render_page(page, t=0.0, now='12:00', w=PANEL_W, h=PANEL_H, pressed=None):
             p = max(0.0, min(1.0, float(L.get('p', 0))))
             if p > 0:
                 cv.rect(x, y, max(1, round(bw * p)), bh, c, filled=True)
+
+        elif kind == 'wifi':
+            draw_wifi(cv, L.get('x', 0), L.get('y', 0), wifi, c,
+                      parse_color(L.get('bg'), (74, 73, 74)))
     return cv
+
+
+def draw_wifi(cv, x, y, level, on, off):
+    """Значок Wi-Fi 21x15: точка и три дуги веером. Тот же расчёт, что drawWifi в прошивке."""
+    cx, cy = x + 10, y + 14
+    for py in range(y, y + 15):
+        for px in range(x, x + 21):
+            dx, dy = px - cx, cy - py
+            r2 = dx * dx + dy * dy
+            if r2 <= 3:
+                ring = 0
+            elif dx > dy or -dx > dy:
+                continue
+            elif 16 <= r2 <= 30:
+                ring = 1
+            elif 56 <= r2 <= 90:
+                ring = 2
+            elif 121 <= r2 <= 182:
+                ring = 3
+            else:
+                continue
+            cv.set(px, py, on if level >= ring else off)
 
 
 # Градации яркости: без них тусклый фон прогресс-бара неотличим от заливки.

@@ -9,6 +9,7 @@
 // по пикселю в живой кадровый буфер было бы медленно и с мерцанием.
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <WiFi.h>
 
 #include "board.h"
 #include "layout_embedded.h"
@@ -61,6 +62,14 @@ static uint32_t pollMs   = DEFAULT_POLL * 1000;
 static int  brightness = 70, litBrightness = -1;
 static char clockBuf[8] = "--:--";
 static bool staleShown  = false;
+static int8_t wifiShown = -1;   // дуг на значке Wi-Fi, -1 — нет связи
+
+// Пороги как у телефонов: от −60 dBm три дуги, от −70 две, от −80 одна, слабее — точка.
+static int8_t wifiLevel() {
+  if (demo || !netOnline()) return -1;
+  const int rssi = WiFi.RSSI();
+  return rssi >= -60 ? 3 : rssi >= -70 ? 2 : rssi >= -80 ? 1 : 0;
+}
 
 // Полосы экрана с бегущими строками, которые не влезают по ширине и потому
 // движутся. Между полными перерисовками обновляются только они.
@@ -252,6 +261,7 @@ static RenderCtx makeCtx() {
   ctx.pageElapsedMs = millis() - pageStart;
   ctx.pressedId = pressedId[0] ? pressedId : nullptr;
   ctx.stale = staleShown;
+  ctx.wifi = wifiShown;
   return ctx;
 }
 
@@ -403,6 +413,16 @@ void loop() {
   if (stale != staleShown) {
     staleShown = stale;
     dirty = true;
+  }
+  // Сигнал раз в 5 с; перерисовка — только когда меняется число дуг.
+  static uint32_t lastWifiCheck = 0;
+  if (millis() - lastWifiCheck >= 5000) {
+    lastWifiCheck = millis();
+    const int8_t lv = wifiLevel();
+    if (lv != wifiShown) {
+      wifiShown = lv;
+      dirty = true;
+    }
   }
   // Экран-заглушка ловит появление сети раз в секунду.
   if (!haveData && millis() - lastFrame >= 1000) dirty = true;

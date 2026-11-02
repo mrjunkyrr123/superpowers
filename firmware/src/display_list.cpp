@@ -20,6 +20,28 @@ static int16_t alignX(const char *a, int16_t x, int16_t boxW, int textW,
   return x;
 }
 
+// Значок Wi-Fi как в телефоне: точка и три дуги веером вверх, 21x15. level — сколько
+// дуг горит (0 — только точка); -1 — связи нет, всё тусклое. Тот же расчёт —
+// в mock-server/render.py, чтобы превью совпадало с платой.
+static void drawWifi(PixelSink &sink, int16_t x, int16_t y, int8_t level, uint16_t on,
+                     uint16_t off) {
+  const int cx = x + 10, cy = y + 14;
+  for (int py = y; py < y + 15; ++py) {
+    for (int px = x; px < x + 21; ++px) {
+      const int dx = px - cx, dy = cy - py;
+      const int r2 = dx * dx + dy * dy;
+      int ring;
+      if (r2 <= 3) ring = 0;                                  // точка
+      else if (dx > dy || -dx > dy) continue;                 // вне веера 90°
+      else if (r2 >= 16 && r2 <= 30) ring = 1;
+      else if (r2 >= 56 && r2 <= 90) ring = 2;
+      else if (r2 >= 121 && r2 <= 182) ring = 3;
+      else continue;
+      sink.px(px, py, level >= ring ? on : off);
+    }
+  }
+}
+
 void renderPage(PixelSink &sink, JsonObjectConst page, const RenderCtx &ctx) {
   drawRect(sink, 0, 0, ctx.w, ctx.h, 0, true);   // чистим кадр
 
@@ -79,6 +101,10 @@ void renderPage(PixelSink &sink, JsonObjectConst page, const RenderCtx &ctx) {
       fillRoundRect(sink, x, y, bw, bh, L["r"] | 8, bg);
       drawText(sink, x + (bw - textWidth(f, label)) / 2,
                y + (bh - f.yAdvance) / 2, f, fg, label);
+
+    } else if (!strcmp(t, "wifi")) {
+      // Силу сигнала знает только устройство — сервер даёт лишь место и цвета.
+      drawWifi(sink, x, y, ctx.wifi, c, parseColor(L["bg"] | "", 0x4A49));
 
     } else if (!strcmp(t, "bar")) {
       const int16_t bw = L["w"] | ctx.w, bh = L["h"] | 3;
