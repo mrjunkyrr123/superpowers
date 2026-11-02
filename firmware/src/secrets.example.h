@@ -28,3 +28,5 @@
 // корневой сертификат вашего API в API_ROOT_CA.
 #define ALLOW_INSECURE_TLS 1
 #define API_ROOT_CA        ""
+// Для api.recoroom.ru (Let's Encrypt): #include "ca_isrg.h", ALLOW_INSECURE_TLS 0,
+// API_ROOT_CA ISRG_ROOTS_PEM.
