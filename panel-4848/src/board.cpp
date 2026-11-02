@@ -20,7 +20,14 @@ static Arduino_ESP32RGBPanel *rgbpanel = new Arduino_ESP32RGBPanel(
     8 /* G0 */, 20 /* G1 */, 3 /* G2 */, 46 /* G3 */, 9 /* G4 */, 10 /* G5 */,
     4 /* B0 */, 5 /* B1 */, 6 /* B2 */, 7 /* B3 */, 15 /* B4 */,
     1 /* hsync_polarity */, 10 /* hsync_front_porch */, 8 /* hsync_pulse_width */, 50 /* hsync_back_porch */,
-    1 /* vsync_polarity */, 10 /* vsync_front_porch */, 8 /* vsync_pulse_width */, 20 /* vsync_back_porch */);
+    1 /* vsync_polarity */, 10 /* vsync_front_porch */, 8 /* vsync_pulse_width */, 20 /* vsync_back_porch */,
+    0 /* pclk_active_neg */, GFX_NOT_DEFINED /* prefer_speed: 12 МГц */, false /* big endian */,
+    0 /* de_idle_high */, 0 /* pclk_idle_high */,
+    // Bounce-буферы во внутренней памяти: экран читает кадр через них, а не
+    // прямо из PSRAM. Без них наша запись в PSRAM (теневой буфер, копирование
+    // кадра) отнимает у экрана поток, и картинка дрожит и сдвигается вбок.
+    // 10 строк; размер кадра в пикселях должен делиться на это число.
+    SCREEN_W * 10 /* bounce_buffer_size_px */);
 
 static Arduino_RGB_Display *gfx = new Arduino_RGB_Display(
     SCREEN_W, SCREEN_H, rgbpanel, 0 /* rotation */, true /* auto_flush */,
