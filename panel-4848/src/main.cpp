@@ -69,34 +69,71 @@ static void onPageChanged() {
   dirty = true;
 }
 
+// Пролистал руками — экран держится столько, потом автосмена продолжается.
+static const uint32_t MANUAL_HOLD_MS = 60UL * 1000;
+static uint32_t holdUntil = 0;          // 0 — автосмена идёт как обычно
+
+static void turnPage(int delta) {
+  const int n = doc["pages"].size();
+  pageIdx = (pageIdx + delta + n) % n;
+  onPageChanged();
+}
+
 // dwell 0 или одна страница — ротации нет.
 static void rotate() {
-  JsonArrayConst pages = doc["pages"].as<JsonArrayConst>();
-  const uint32_t dwell = (currentPage()["dwell"] | 0) * 1000UL;
-  if (pages.size() < 2 || dwell == 0) return;
-  if (millis() - pageStart >= dwell) {
-    pageIdx = (pageIdx + 1) % pages.size();
-    onPageChanged();
+  if (doc["pages"].size() < 2) return;
+  if (holdUntil) {
+    if (static_cast<int32_t>(millis() - holdUntil) < 0) return;
+    holdUntil = 0;
+    turnPage(+1);
+    return;
   }
+  const uint32_t dwell = (currentPage()["dwell"] | 0) * 1000UL;
+  if (dwell && millis() - pageStart >= dwell) turnPage(+1);
 }
+
+// Жест: сдвиг больше SLOP — уже не нажатие, кнопка гаснет; при отпускании
+// сдвиг по горизонтали от SWIPE_MIN и вдвое больше вертикального — листание.
+static const int16_t SLOP = 24, SWIPE_MIN = 80;
+static bool    fingerDown = false, moved = false;
+static int16_t startX, startY, lastX, lastY;
 
 static void handleTouch() {
   int16_t x, y;
   const Touch t = touchRead(x, y);
   if (t == Touch::Down) {
+    if (!fingerDown) {
+      fingerDown = true;
+      moved = false;
+      startX = x;
+      startY = y;
+    }
+    lastX = x;
+    lastY = y;
+    if (!moved && (abs(x - startX) > SLOP || abs(y - startY) > SLOP)) moved = true;
+
     ButtonHit hit;
-    const char *id = hitTest(currentPage(), x, y, hit) ? hit.id : "";
-    if (strcmp(id, pressedId)) {      // палец зашёл на кнопку или ушёл с неё
+    const char *id = !moved && hitTest(currentPage(), x, y, hit) ? hit.id : "";
+    if (strcmp(id, pressedId)) {      // палец зашёл на кнопку, ушёл с неё или поехал
       strlcpy(pressedId, id, sizeof(pressedId));
       pressedHit = hit;
       dirty = true;
     }
-  } else if (t == Touch::Up && pressedId[0]) {
-    // Срабатывает при отпускании над кнопкой: увёл палец — передумал.
-    Serial.printf("кнопка %s -> %s %s (отправка на сервер — шаг B)\n", pressedId,
-                  pressedHit.method, pressedHit.path);
-    pressedId[0] = '\0';
-    dirty = true;
+  } else if (t == Touch::Up && fingerDown) {
+    fingerDown = false;
+    const int16_t dx = lastX - startX, dy = lastY - startY;
+    if (moved && abs(dx) >= SWIPE_MIN && abs(dx) > 2 * abs(dy)) {
+      turnPage(dx < 0 ? +1 : -1);     // влево — следующий, как в телефоне
+      holdUntil = millis() + MANUAL_HOLD_MS;
+      if (!holdUntil) holdUntil = 1;  // 0 занят под «паузы нет»
+      Serial.printf("свайп %s -> экран %u\n", dx < 0 ? "влево" : "вправо", pageIdx + 1);
+    } else if (pressedId[0]) {
+      // Срабатывает при отпускании над кнопкой: увёл палец — передумал.
+      Serial.printf("кнопка %s -> %s %s (отправка на сервер — шаг B)\n", pressedId,
+                    pressedHit.method, pressedHit.path);
+      pressedId[0] = '\0';
+      dirty = true;
+    }
   }
 }
 
