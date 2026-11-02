@@ -148,7 +148,9 @@ static void poll() {
   const Fetch r = fetchDisplayList(cfg, body, etag);
   if (r == Fetch::Updated) {
     if (applyBody(body.c_str())) {
+#ifndef NO_CACHE_WRITE_TEST   // диагностика помех: без записи во флеш
       cacheSave(body, etag);
+#endif
       lastOkMs = millis();
       Serial.printf("данные обновлены: %u байт, %u экр.\n", (unsigned)body.length(),
                     (unsigned)doc["pages"].size());
@@ -331,6 +333,12 @@ void setup() {
   }
 
   loadConfig(cfg);
+#ifdef NO_NET_TEST
+  // Диагностика помех экрана: сеть не поднимаем вовсе, настройки в NVS не трогаем.
+  // Сборка: $env:PLATFORMIO_BUILD_FLAGS = '-DNO_NET_TEST' перед flash.ps1.
+  cfg.ssid = "";
+  Serial.println(F("NO_NET_TEST: сеть выключена для опыта"));
+#endif
 
   if (!cfg.valid()) {
     demo = true;

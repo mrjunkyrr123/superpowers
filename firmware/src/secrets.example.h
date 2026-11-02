@@ -21,7 +21,10 @@
 #define FW_VERSION         "1.0.0"
 
 // Пароль OTA (pio run -t upload --upload-port <ip>). Пусто — OTA выключено.
+// Можно не писать сюда, а задать флагом сборки -DOTA_PASSWORD=... (так делает panel-4848).
+#ifndef OTA_PASSWORD
 #define OTA_PASSWORD       "change-me"
+#endif
 
 // TLS. 1 — сертификат сервера НЕ проверяется: допустимо только в доверенной
 // локальной сети. Для запросов через интернет поставьте 0 и впишите реальный

@@ -44,6 +44,9 @@ bool netBegin(const Config &c) {
   // OTA без пароля — это прошивка для любого в той же сети. Пустой пароль
   // значит «OTA выключено», а не «OTA без пароля».
   if (otaEnabled()) {
+#ifdef OTA_HOSTNAME
+    ArduinoOTA.setHostname(OTA_HOSTNAME);   // доступна как <имя>.local, IP может меняться
+#endif
     ArduinoOTA.setPassword(OTA_PASSWORD);
     ArduinoOTA.begin();
   } else {
