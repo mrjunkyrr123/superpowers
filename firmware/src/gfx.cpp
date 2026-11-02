@@ -58,13 +58,22 @@ void drawText(PixelSink &sink, int16_t x, int16_t yTop, const GfxFont &f,
     const GfxGlyph *g = glyphOrFallback(f, cp);
     if (!g) continue;
     // Растр упакован MSB-first, строки идут подряд без выравнивания.
+    // Подряд идущие точки строки отдаются одним отрезком.
     for (uint8_t ry = 0; ry < g->h; ++ry) {
-      for (uint8_t rx = 0; rx < g->w; ++rx) {
-        const uint32_t bit = static_cast<uint32_t>(ry) * g->w + rx;
-        if (!(f.bitmap[g->off + bit / 8] & (0x80 >> (bit % 8)))) continue;
-        const int16_t px = cur + g->dx + rx;
-        if (px < clipX0 || px >= clipX1) continue;
-        sink.px(px, base + g->dy + ry, color);
+      int16_t runStart = -1;
+      for (int16_t rx = 0; rx <= g->w; ++rx) {
+        bool on = false;
+        if (rx < g->w) {
+          const uint32_t bit = static_cast<uint32_t>(ry) * g->w + rx;
+          const int16_t px = cur + g->dx + rx;
+          on = (f.bitmap[g->off + bit / 8] & (0x80 >> (bit % 8))) &&
+               px >= clipX0 && px < clipX1;
+        }
+        if (on && runStart < 0) runStart = rx;
+        if (!on && runStart >= 0) {
+          sink.hline(cur + g->dx + runStart, base + g->dy + ry, rx - runStart, color);
+          runStart = -1;
+        }
       }
     }
     cur += g->adv;
@@ -75,14 +84,11 @@ void drawRect(PixelSink &sink, int16_t x, int16_t y, int16_t w, int16_t h,
               uint16_t color, bool filled) {
   if (w <= 0 || h <= 0) return;
   if (filled) {
-    for (int16_t yy = y; yy < y + h; ++yy)
-      for (int16_t xx = x; xx < x + w; ++xx) sink.px(xx, yy, color);
+    for (int16_t yy = y; yy < y + h; ++yy) sink.hline(x, yy, w, color);
     return;
   }
-  for (int16_t xx = x; xx < x + w; ++xx) {
-    sink.px(xx, y, color);
-    sink.px(xx, y + h - 1, color);
-  }
+  sink.hline(x, y, w, color);
+  sink.hline(x, y + h - 1, w, color);
   for (int16_t yy = y; yy < y + h; ++yy) {
     sink.px(x, yy, color);
     sink.px(x + w - 1, yy, color);
@@ -114,8 +120,7 @@ void fillRoundRect(PixelSink &sink, int16_t x, int16_t y, int16_t w, int16_t h,
   if (r > maxR) r = maxR;
   for (int16_t row = 0; row < h; ++row) {
     const int16_t inset = roundRectInset(row, h, r);
-    for (int16_t col = inset; col < w - inset; ++col)
-      sink.px(x + col, y + row, color);
+    sink.hline(x + inset, y + row, w - 2 * inset, color);
   }
 }
 

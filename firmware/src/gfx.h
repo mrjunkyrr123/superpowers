@@ -6,6 +6,12 @@
 // прогнать на хосте без панели (см. test/), а не только на железе.
 struct PixelSink {
   virtual void px(int16_t x, int16_t y, uint16_t color) = 0;
+  // Горизонтальный отрезок [x, x+w). По умолчанию — по точке; приёмник с
+  // кадровым буфером переопределяет его и заливает строку целиком: на экране
+  // 480x480 одна очистка кадра — это 230 тысяч вызовов px().
+  virtual void hline(int16_t x, int16_t y, int16_t w, uint16_t color) {
+    for (int16_t i = 0; i < w; ++i) px(x + i, y, color);
+  }
   virtual ~PixelSink() {}
 };
 

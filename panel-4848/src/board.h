@@ -15,6 +15,9 @@ void backlight(int percent);
 // Выводит кадр 480x480 RGB565 целиком.
 void present(const uint16_t *frame);
 
+// Выводит только строки [y0, y1) того же кадра.
+void presentRows(const uint16_t *frame, int16_t y0, int16_t y1);
+
 enum class Touch {
   NoChange,   // у сенсора нет новых данных
   Down,       // палец на экране, x/y заполнены

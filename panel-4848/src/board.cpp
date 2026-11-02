@@ -95,3 +95,12 @@ void backlight(int percent) {
 void present(const uint16_t *frame) {
   gfx->draw16bitRGBBitmap(0, 0, const_cast<uint16_t *>(frame), SCREEN_W, SCREEN_H);
 }
+
+void presentRows(const uint16_t *frame, int16_t y0, int16_t y1) {
+  if (y0 < 0) y0 = 0;
+  if (y1 > SCREEN_H) y1 = SCREEN_H;
+  if (y1 <= y0) return;
+  // Строки полной ширины лежат в кадре подряд — отдаём одним куском.
+  gfx->draw16bitRGBBitmap(0, y0, const_cast<uint16_t *>(frame) + y0 * SCREEN_W,
+                          SCREEN_W, y1 - y0);
+}

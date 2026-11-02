@@ -1,5 +1,5 @@
-// Панель 480x480 на Guition 4848S040. Шаг A: раскладка зашита в прошивку,
-// сети нет. Проверяем отрисовку display list и кнопки на живом железе.
+// Панель 480x480 на Guition 4848S040: дашборд RECOROOM. Пока без сети —
+// раскладка зашита в прошивку (layout_embedded.h).
 //
 // Кадр собирается в теневом буфере в PSRAM и уходит на экран целиком —
 // по пикселю в живой кадровый буфер было бы медленно и с мерцанием.
@@ -7,7 +7,7 @@
 #include <ArduinoJson.h>
 
 #include "board.h"
-#include "demo_layout.h"
+#include "layout_embedded.h"
 #include "display_list.h"
 #include "gfx.h"
 
@@ -15,10 +15,21 @@ static const uint32_t FRAME_MS = 40;   // для бегущей строки; б
 
 static uint16_t *frame = nullptr;
 
+// Пишет только в строки [y0, y1): так полосу с бегущей строкой можно
+// перерисовать, не трогая остальной кадр.
 struct FrameSink : PixelSink {
+  int16_t y0 = 0, y1 = SCREEN_H;
   void px(int16_t x, int16_t y, uint16_t color) override {
-    if (x < 0 || y < 0 || x >= SCREEN_W || y >= SCREEN_H) return;
+    if (x < 0 || y < y0 || x >= SCREEN_W || y >= y1) return;
     frame[y * SCREEN_W + x] = color;
+  }
+  void hline(int16_t x, int16_t y, int16_t w, uint16_t color) override {
+    if (y < y0 || y >= y1) return;
+    int16_t x1 = x + w;
+    if (x < 0) x = 0;
+    if (x1 > SCREEN_W) x1 = SCREEN_W;
+    uint16_t *p = frame + y * SCREEN_W + x;
+    for (int16_t i = x; i < x1; ++i) *p++ = color;
   }
 };
 static FrameSink sink;
@@ -26,8 +37,13 @@ static FrameSink sink;
 static JsonDocument doc;
 static uint8_t  pageIdx   = 0;
 static uint32_t pageStart = 0;
-static bool     animated  = false;   // на странице есть бегущая строка
 static bool     dirty     = true;
+
+// Полосы экрана с бегущими строками, которые не влезают по ширине и потому
+// движутся. Между полными перерисовками обновляются только они.
+struct Band { int16_t y0, y1; };
+static Band    bands[8];
+static uint8_t bandCount = 0;
 
 // Кнопка под пальцем. Копия id, а не указатель: в шаге B документ будет
 // меняться по ответу сервера, пока палец ещё на экране.
@@ -40,9 +56,15 @@ static JsonObjectConst currentPage() {
 
 static void onPageChanged() {
   pageStart = millis();
-  animated = false;
-  for (JsonObjectConst L : currentPage()["layers"].as<JsonArrayConst>())
-    if (!strcmp(L["t"] | "", "scroll")) animated = true;
+  bandCount = 0;
+  for (JsonObjectConst L : currentPage()["layers"].as<JsonArrayConst>()) {
+    if (strcmp(L["t"] | "", "scroll")) continue;
+    const GfxFont *f = fontByName(L["f"] | "f5");
+    if (!f || textWidth(*f, L["s"] | "") <= (L["w"] | SCREEN_W)) continue;  // стоит на месте
+    if (bandCount == sizeof(bands) / sizeof(bands[0])) break;
+    const int16_t y = L["y"] | 0;
+    bands[bandCount++] = {y, static_cast<int16_t>(y + f->yAdvance)};
+  }
   pressedId[0] = '\0';
   dirty = true;
 }
@@ -78,31 +100,57 @@ static void handleTouch() {
   }
 }
 
-static void draw() {
-  const uint32_t t0 = millis();
+static RenderCtx makeCtx() {
   RenderCtx ctx;
   ctx.w = SCREEN_W;
   ctx.h = SCREEN_H;
   ctx.clockStr = "--:--";              // часов без сети нет, NTP — шаг B
   ctx.pageElapsedMs = millis() - pageStart;
   ctx.pressedId = pressedId[0] ? pressedId : nullptr;
-  renderPage(sink, currentPage(), ctx);
+  return ctx;
+}
+
+// Раз на экран — чтобы знать запас по времени.
+static void report(bool bandsOnly, uint32_t renderMs, uint32_t presentMs) {
+  static int reportedPage[2] = {-1, -1};
+  if (reportedPage[bandsOnly] == pageIdx) return;
+  reportedPage[bandsOnly] = pageIdx;
+  Serial.printf("экран %u (%s), %s: отрисовка %u мс, вывод %u мс\n", pageIdx + 1,
+                currentPage()["id"] | "?", bandsOnly ? "полосы" : "кадр",
+                (unsigned)renderMs, (unsigned)presentMs);
+}
+
+static void draw() {
+  const uint32_t t0 = millis();
+  sink.y0 = 0;
+  sink.y1 = SCREEN_H;
+  renderPage(sink, currentPage(), makeCtx());
   const uint32_t t1 = millis();
   present(frame);
-  const uint32_t t2 = millis();
+  report(false, t1 - t0, millis() - t1);
+}
 
-  static bool reported = false;        // один раз — чтобы знать запас по времени
-  if (!reported) {
-    reported = true;
-    Serial.printf("кадр: отрисовка %u мс, вывод %u мс\n", (unsigned)(t1 - t0),
-                  (unsigned)(t2 - t1));
+// Только полосы с бегущими строками. Страница проходится целиком, но в память
+// пишутся лишь строки полосы — а запись в PSRAM и есть основная цена кадра.
+static void drawBands() {
+  const uint32_t t0 = millis();
+  const RenderCtx ctx = makeCtx();
+  uint32_t renderMs = 0;
+  for (uint8_t i = 0; i < bandCount; ++i) {
+    sink.y0 = bands[i].y0;
+    sink.y1 = bands[i].y1;
+    const uint32_t r0 = millis();
+    renderPage(sink, currentPage(), ctx);
+    renderMs += millis() - r0;
+    presentRows(frame, bands[i].y0, bands[i].y1);
   }
+  report(true, renderMs, millis() - t0 - renderMs);
 }
 
 void setup() {
   Serial.begin(115200);
   delay(300);
-  Serial.println("\n=== panel-4848, шаг A: раскладка без сети ===");
+  Serial.println("\n=== panel-4848: дашборд, раскладка без сети ===");
 
   frame = static_cast<uint16_t *>(
       heap_caps_malloc(SCREEN_W * SCREEN_H * sizeof(uint16_t), MALLOC_CAP_SPIRAM));
@@ -111,7 +159,7 @@ void setup() {
     while (true) delay(1000);
   }
 
-  const DeserializationError err = deserializeJson(doc, DEMO_LAYOUT);
+  const DeserializationError err = deserializeJson(doc, EMBEDDED_LAYOUT);
   if (err || doc["pages"].size() == 0) {
     Serial.printf("ОШИБКА: раскладка не разобралась: %s\n", err.c_str());
     while (true) delay(1000);
@@ -130,9 +178,12 @@ void loop() {
   rotate();
 
   const uint32_t now = millis();
-  if (dirty || (animated && now - lastFrame >= FRAME_MS)) {
+  if (dirty) {
     draw();
     dirty = false;
+    lastFrame = now;
+  } else if (bandCount && now - lastFrame >= FRAME_MS) {
+    drawBands();
     lastFrame = now;
   }
   delay(10);
