@@ -83,7 +83,9 @@ Touch touchRead(int16_t &x, int16_t &y) {
 
 // ---------- экран ----------
 bool boardBegin() {
-  ledcAttach(PIN_BL, 5000, 8);
+  // 25 кГц — выше слышимого. На 5 кГц драйвер подсветки свистел: дроссель
+  // и керамика звенят на частоте ШИМ.
+  ledcAttach(PIN_BL, 25000, 8);
   backlight(0);                      // не светить мусором, пока экран не готов
 
   const bool ok = gfx->begin();

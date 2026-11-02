@@ -120,7 +120,9 @@ bool hitTest(JsonObjectConst page, int16_t x, int16_t y, ButtonHit &out) {
     JsonObjectConst a = L["action"];
     out.id = L["id"] | "";
     out.method = a["method"] | "POST";
-    out.path = a["path"] | nullptr;
+    // Не `| nullptr`: в ArduinoJson 7 это всегда даёт nullptr, и ни одна
+    // кнопка не нажимается. as<const char*>() — строка или nullptr.
+    out.path = a["path"].as<const char *>();
     return out.path != nullptr;   // кнопка без пути ничего не делает
   }
   return false;
