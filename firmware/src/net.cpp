@@ -4,6 +4,7 @@
 #include <HTTPClient.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <esp_system.h>
 #include <time.h>
 #include "secrets.h"
 
@@ -163,6 +164,23 @@ int sendAction(const Config &c, const char *method, const char *path,
   return code;
 }
 
+// Почему устройство последний раз стартовало — видно в журнале сервера по heartbeat.
+// brownout — просело питание (кабель, зарядка), panic/wdt — сбой прошивки, sw — сами.
+static const char *resetReason() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:  return "poweron";
+    case ESP_RST_EXT:      return "ext";
+    case ESP_RST_SW:       return "sw";
+    case ESP_RST_PANIC:    return "panic";
+    case ESP_RST_INT_WDT:  return "int_wdt";
+    case ESP_RST_TASK_WDT: return "task_wdt";
+    case ESP_RST_WDT:      return "wdt";
+    case ESP_RST_BROWNOUT: return "brownout";
+    case ESP_RST_DEEPSLEEP: return "deepsleep";
+    default:               return "other";
+  }
+}
+
 void sendHeartbeat(const Config &c, const String &etag, uint32_t uptimeSec) {
   if (!netOnline()) return;
 
@@ -172,6 +190,7 @@ void sendHeartbeat(const Config &c, const String &etag, uint32_t uptimeSec) {
   doc["rssi"]      = WiFi.RSSI();
   doc["free_heap"] = ESP.getFreeHeap();
   doc["last_etag"] = etag;
+  doc["reset"]     = resetReason();
 
   String payload;
   serializeJson(doc, payload);
