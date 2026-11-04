@@ -26,8 +26,9 @@ static Arduino_ESP32RGBPanel *rgbpanel = new Arduino_ESP32RGBPanel(
     // Bounce-буферы во внутренней памяти: экран читает кадр через них, а не
     // прямо из PSRAM. Без них наша запись в PSRAM (теневой буфер, копирование
     // кадра) отнимает у экрана поток, и картинка дрожит и сдвигается вбок.
-    // 10 строк; размер кадра в пикселях должен делиться на это число.
-    SCREEN_W * 10 /* bounce_buffer_size_px */);
+    // 20 строк: с Wi-Fi на 10 строках прерывание опаздывало и в начале строк шли штрихи
+    // (без Wi-Fi их не было). Кадр должен делиться на удвоенный размер буфера.
+    SCREEN_W * 20 /* bounce_buffer_size_px */);
 
 static Arduino_RGB_Display *gfx = new Arduino_RGB_Display(
     SCREEN_W, SCREEN_H, rgbpanel, 0 /* rotation */, true /* auto_flush */,
@@ -99,6 +100,11 @@ bool boardBegin() {
 
 void backlight(int percent) {
   ledcWrite(PIN_BL, map(constrain(percent, 0, 100), 0, 100, 0, 255));
+}
+
+void backlightFade(int fromPercent, int toPercent, int ms) {
+  const auto duty = [](int p) { return (uint32_t)map(constrain(p, 0, 100), 0, 100, 0, 255); };
+  ledcFade(PIN_BL, duty(fromPercent), duty(toPercent), ms);
 }
 
 void present(const uint16_t *frame) {

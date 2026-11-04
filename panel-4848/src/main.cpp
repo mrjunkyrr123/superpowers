@@ -55,9 +55,9 @@ static uint32_t pageStart = 0;
 static bool     dirty     = true;
 
 static uint32_t bootMs   = 0;
-static uint32_t lastPoll = 0, lastBeat = 0;
-static uint32_t lastOkMs = 0;        // 0 — с сервера ещё ничего не приходило
-static uint32_t pollMs   = DEFAULT_POLL * 1000;
+// volatile: пишет сетевая задача на другом ядре, читает loop.
+static volatile uint32_t lastOkMs = 0;   // 0 — с сервера ещё ничего не приходило
+static volatile uint32_t pollMs   = DEFAULT_POLL * 1000;
 
 static int  brightness = 70, litBrightness = -1;
 static char clockBuf[8] = "--:--";
@@ -110,11 +110,14 @@ static void onPageChanged() {
 static const uint32_t MANUAL_HOLD_MS = 60UL * 1000;
 static uint32_t holdUntil = 0;          // 0 — автосмена идёт как обычно
 
+static bool fadeNext = false;   // следующий кадр — через затухание подсветки
+
 static void turnPage(int delta) {
   const int n = doc["pages"].size();
   if (!n) return;
   pageIdx = (pageIdx + delta + n) % n;
   onPageChanged();
+  fadeNext = n > 1;
 }
 
 // Разбирает display list. false — JSON битый или пустой: тогда на экране
@@ -152,21 +155,80 @@ static bool applyBody(const char *json) {
   return true;
 }
 
-static void poll() {
+// ---------- Сеть — своя задача на ядре 0 ----------
+// Шифрованный запрос на слабом Wi-Fi идёт секундами: в loop это замирание экрана и
+// касаний. Задача только качает и шлёт; разбирает ответ и рисует loop — документ его.
+struct Action {
+  char method[8];
+  char path[128];
+  char id[32];
+};
+static QueueHandle_t     actionQ = nullptr;
+static SemaphoreHandle_t bodyMux = nullptr;
+static String            freshBody;        // новый ответ сервера, только под bodyMux
+static volatile bool     pollNow = false;  // переспросить, не дожидаясь срока
+
+static void pollOnce() {
   String body;
   const Fetch r = fetchDisplayList(cfg, body, etag);
   if (r == Fetch::Updated) {
-    if (applyBody(body.c_str())) {
-#ifndef NO_CACHE_WRITE_TEST   // диагностика помех: без записи во флеш
-      cacheSave(body, etag);
-#endif
-      lastOkMs = millis();
-      Serial.printf("данные обновлены: %u байт, %u экр.\n", (unsigned)body.length(),
-                    (unsigned)doc["pages"].size());
+    // Проверяем здесь: битый ответ не должен затереть рабочий кэш.
+    JsonDocument probe;
+    if (deserializeJson(probe, body) || probe["pages"].size() == 0) {
+      Serial.println(F("JSON: ответ сервера битый, оставляем что было"));
+      return;
     }
+#ifndef NO_CACHE_WRITE_TEST   // диагностика помех: без записи во флеш
+    cacheSave(body, etag);
+#endif
+    xSemaphoreTake(bodyMux, portMAX_DELAY);
+    freshBody = body;
+    xSemaphoreGive(bodyMux);
+    lastOkMs = millis();
   } else if (r == Fetch::NotModified) {
     lastOkMs = millis();
   }
+}
+
+static void netTask(void *) {
+  netBegin(cfg);                 // до 20 с — экран в это время живёт
+  uint32_t lastPoll = 0, lastBeat = millis();
+  bool first = true;
+  for (;;) {
+    netLoop();
+    Action a;
+    if (xQueueReceive(actionQ, &a, 0) == pdTRUE) {
+      const int code = sendAction(cfg, a.method, a.path, a.id);
+      Serial.printf("  ответ сервера на %s: %d\n", a.id, code);
+      // Сервер мог поменять экран в ответ на нажатие — переспросим сразу.
+      if (code >= 200 && code < 300) pollNow = true;
+    }
+    const uint32_t now = millis();
+    if (first || pollNow || now - lastPoll >= pollMs) {
+      first = false;
+      pollNow = false;
+      lastPoll = now;
+      pollOnce();
+    }
+    if (now - lastBeat >= HEARTBEAT_MS) {
+      lastBeat = now;
+      sendHeartbeat(cfg, etag, now / 1000);
+    }
+    vTaskDelay(pdMS_TO_TICKS(20));
+  }
+}
+
+// Забирает ответ, который принесла сетевая задача.
+static void takeFreshBody() {
+  if (!bodyMux) return;
+  String body;
+  xSemaphoreTake(bodyMux, portMAX_DELAY);
+  body = freshBody;
+  freshBody = String();
+  xSemaphoreGive(bodyMux);
+  if (body.length() && applyBody(body.c_str()))
+    Serial.printf("данные обновлены: %u байт, %u экр.\n", (unsigned)body.length(),
+                  (unsigned)doc["pages"].size());
 }
 
 // dwell 0 или одна страница — ротации нет.
@@ -190,10 +252,11 @@ static void pressButton(const char *id) {
     Serial.println(F("  демо без сети — никуда не отправлено"));
     return;
   }
-  const int code = sendAction(cfg, pressedMethod, pressedPath, id);
-  Serial.printf("  ответ сервера: %d\n", code);
-  // Сервер мог поменять экран в ответ на нажатие — переспросим сразу.
-  if (code >= 200 && code < 300) lastPoll = millis() - pollMs;
+  Action a;
+  strlcpy(a.method, pressedMethod, sizeof(a.method));
+  strlcpy(a.path, pressedPath, sizeof(a.path));
+  strlcpy(a.id, id, sizeof(a.id));
+  if (xQueueSend(actionQ, &a, 0) != pdTRUE) Serial.println(F("  очередь нажатий полна"));
 }
 
 // Жест: сдвиг больше SLOP — уже не нажатие, кнопка гаснет; при отпускании
@@ -275,8 +338,8 @@ static void report(bool bandsOnly, uint32_t renderMs, uint32_t presentMs) {
                 (unsigned)renderMs, (unsigned)presentMs);
 }
 
-static void draw() {
-  const uint32_t t0 = millis();
+// Собирает кадр в теневом буфере; на экран он ещё не идёт.
+static void renderFrame() {
   sink.y0 = 0;
   sink.y1 = SCREEN_H;
   const RenderCtx ctx = makeCtx();
@@ -287,6 +350,11 @@ static void draw() {
     renderStatus(sink, ctx, online ? "НЕТ ДАННЫХ" : "НЕТ СЕТИ",
                  online ? cfg.url.c_str() : cfg.ssid.c_str());
   }
+}
+
+static void draw() {
+  const uint32_t t0 = millis();
+  renderFrame();
   const uint32_t t1 = millis();
   present(frame);
   if (haveData) report(false, t1 - t0, millis() - t1);
@@ -295,6 +363,24 @@ static void draw() {
     backlight(brightness);
     litBrightness = brightness;
   }
+}
+
+// Смена экрана: подсветка плавно гаснет, кадр меняется в темноте, подсветка плавно
+// зажигается. Кроссфейд кадра — это сотни КБ через PSRAM за шаг, он вернёт дрожь;
+// подсветку ведёт таймер, память не занята. Новый кадр собирается, пока свет гаснет.
+static const int FADE_MS = 180;
+
+static void drawFaded() {
+  const int lit = litBrightness < 0 ? brightness : litBrightness;
+  backlightFade(lit, 0, FADE_MS);
+  const uint32_t t0 = millis();
+  renderFrame();
+  const uint32_t spent = millis() - t0;
+  if (spent < FADE_MS) delay(FADE_MS - spent);
+  present(frame);
+  delay(30);                     // кадр дошёл до экрана — панель обновляется ~40 раз в с
+  backlightFade(0, brightness, FADE_MS);
+  litBrightness = brightness;
 }
 
 // Только полосы с бегущими строками. Страница проходится целиком, но в память
@@ -367,9 +453,11 @@ void setup() {
     if (!haveData) showStatus("ПОДКЛЮЧЕНИЕ", cfg.ssid.c_str());
     else draw();
 
-    netBegin(cfg);
-    poll();
-    lastPoll = lastBeat = millis();
+    actionQ = xQueueCreate(4, sizeof(Action));
+    bodyMux = xSemaphoreCreateMutex();
+    // Ядро 0 — там же стек Wi-Fi; loop и прерывание экрана остаются на ядре 1.
+    // 16 КБ стека: TLS-рукопожатие на меньшем падает.
+    xTaskCreatePinnedToCore(netTask, "net", 16384, nullptr, 1, nullptr, 0);
   }
 
   char t[8];
@@ -383,14 +471,8 @@ void loop() {
   static uint32_t lastFrame = 0;
   configConsole(cfg);
 
-  const uint32_t now = millis();
   if (!demo) {
-    netLoop();
-    if (now - lastPoll >= pollMs) { lastPoll = now; poll(); }
-    if (now - lastBeat >= HEARTBEAT_MS) {
-      lastBeat = now;
-      sendHeartbeat(cfg, etag, now / 1000);
-    }
+    takeFreshBody();
     // Чаще всего «зависает» не процессор, а сетевой стек — перезагрузка
     // единственное, что это лечит без выезда на объект.
     if (millis() - (lastOkMs ? lastOkMs : bootMs) > NO_DATA_REBOOT_MS) {
@@ -430,7 +512,9 @@ void loop() {
   const uint32_t t0 = millis();
   if (dirty) {
     dirty = false;
-    draw();
+    if (fadeNext) drawFaded();
+    else draw();
+    fadeNext = false;
     lastFrame = t0;
   } else if (haveData && bandCount && t0 - lastFrame >= FRAME_MS) {
     drawBands();

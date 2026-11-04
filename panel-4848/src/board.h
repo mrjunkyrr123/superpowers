@@ -12,6 +12,9 @@ bool boardBegin();
 // Подсветка 0..100 %.
 void backlight(int percent);
 
+// Плавно меняет подсветку за ms. Делает таймер, не процессор: вызов сразу возвращается.
+void backlightFade(int fromPercent, int toPercent, int ms);
+
 // Выводит кадр 480x480 RGB565 целиком.
 void present(const uint16_t *frame);
 
