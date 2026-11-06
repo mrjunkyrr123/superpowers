@@ -26,6 +26,7 @@ static const uint32_t HEARTBEAT_MS      = 5UL * 60 * 1000;  // каждый за
 // Включается за данными и на нажатия. После старта держим его, чтобы успеть прошить по воздуху.
 static const uint32_t BOOT_ONLINE_MS    = 3UL * 60 * 1000;
 static const uint32_t ACTION_HOLD_MS    = 30UL * 1000;      // второе касание — без ожидания связи
+static const uint32_t CACHE_EVERY_MS    = 10UL * 60 * 1000;
 static const uint32_t NO_DATA_REBOOT_MS = 20UL * 60 * 1000;
 
 static uint16_t *frame = nullptr;
@@ -197,7 +198,13 @@ static void pollOnce() {
       return;
     }
 #ifndef NO_CACHE_WRITE_TEST   // диагностика помех: без записи во флеш
-    cacheSave(body, etag);
+    // Кэш нужен только на случай старта без сети, а данные могут меняться каждую минуту
+    // («Плата офлайн 217 мин.»). Запись во флеш мешает экрану и изнашивает память — редко.
+    static uint32_t lastCacheMs = 0;
+    if (!lastCacheMs || millis() - lastCacheMs >= CACHE_EVERY_MS) {
+      lastCacheMs = millis();
+      cacheSave(body, etag);
+    }
 #endif
     xSemaphoreTake(bodyMux, portMAX_DELAY);
     freshBody = body;
