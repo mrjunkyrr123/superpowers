@@ -249,11 +249,13 @@ static void netTask(void *) {
         lastBeat = millis();
         sendHeartbeat(cfg, etag, lastBeat / 1000);
       }
+#ifndef WIFI_ALWAYS_ON   // сборка panel-4848-idf: экран не страдает, радио не гасим
       // Пока данных нет вовсе, радио не гасим: на экране заглушка, полосы не важны.
       if (!wifiAlways && lastOkMs && static_cast<int32_t>(millis() - holdUntil) >= 0) {
         netSleep();
         awake = false;
       }
+#endif
     }
     vTaskDelay(pdMS_TO_TICKS(20));
   }
