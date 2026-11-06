@@ -89,6 +89,14 @@ static char pressedId[32]     = "";
 static char pressedMethod[8]  = "";
 static char pressedPath[128]  = "";
 
+// Нажатие ушло, ответа ещё нет. Радио включается и запрос идёт секунды: кнопка горит
+// сразу, чтобы было видно, что касание принято, а новые нажатия не принимаются — иначе
+// повторный тык становится вторым касанием, а после закрытия задачи строки съезжают
+// и он попадает по соседней (было 06.11: закрылось лишнее).
+static const uint32_t WAIT_REPLY_MS = 8000;
+static char     waitId[32] = "";
+static uint32_t waitUntil  = 0;
+
 static JsonObjectConst currentPage() {
   return doc["pages"][pageIdx].as<JsonObjectConst>();
 }
@@ -143,6 +151,9 @@ static bool applyBody(const char *json) {
   const size_t oldPages = haveData ? doc["pages"].size() : 0;
   doc = std::move(fresh);
   haveData = true;
+  // Кнопки могли сдвинуться: нажатие под пальцем отменяем, ждать ответа больше нечего.
+  pressedId[0] = '\0';
+  waitId[0] = '\0';
 
   // Те же экраны с новыми цифрами — остаёмся, где были, и не сбрасываем
   // ни паузу после свайпа, ни бегущую строку. Другое число экранов — с начала.
@@ -224,8 +235,9 @@ static void netTask(void *) {
         const int code = sendAction(cfg, a.method, a.path, a.id);
         Serial.printf("  ответ сервера на %s: %d\n", a.id, code);
         holdUntil = millis() + ACTION_HOLD_MS;
-        // Сервер мог поменять экран в ответ на нажатие — переспросим сразу.
-        if (code >= 200 && code < 300) pollNow = true;
+        // Любой ответ сервера — повод переспросить: экран мог поменяться, а на 404
+        // (задачи уже нет) панель иначе показывала бы старое до следующего опроса.
+        if (code > 0) pollNow = true;
       }
       if (first || pollNow || millis() - lastPoll >= pollMs) {
         first = false;
@@ -270,6 +282,7 @@ static void rotate() {
     return;
   }
   const uint32_t dwell = (currentPage()["dwell"] | 0) * 1000UL;
+  if (waitId[0]) return;         // ждём ответа на нажатие — экран не листаем
   if (dwell && millis() - pageStart >= dwell) turnPage(+1);
 }
 
@@ -304,13 +317,14 @@ static void handleTouch() {
       moved = false;
       startX = x;
       startY = y;
+      pressedId[0] = '\0';   // отпускание могло потеряться — адрес кнопки берём заново
     }
     lastX = x;
     lastY = y;
     if (!moved && (abs(x - startX) > SLOP || abs(y - startY) > SLOP)) moved = true;
 
     ButtonHit hit;
-    const char *id = !moved && hitTest(currentPage(), x, y, hit) ? hit.id : "";
+    const char *id = !moved && !waitId[0] && hitTest(currentPage(), x, y, hit) ? hit.id : "";
     if (strcmp(id, pressedId)) {      // палец зашёл на кнопку, ушёл с неё или поехал
       strlcpy(pressedId, id, sizeof(pressedId));
       if (*id) {
@@ -333,6 +347,8 @@ static void handleTouch() {
       char id[sizeof(pressedId)];
       strlcpy(id, pressedId, sizeof(id));
       pressedId[0] = '\0';
+      strlcpy(waitId, id, sizeof(waitId));
+      waitUntil = millis() + WAIT_REPLY_MS;
       draw();
       pressButton(id);
     }
@@ -351,7 +367,7 @@ static RenderCtx makeCtx() {
   ctx.h = SCREEN_H;
   ctx.clockStr = clockBuf;
   ctx.pageElapsedMs = millis() - pageStart;
-  ctx.pressedId = pressedId[0] ? pressedId : nullptr;
+  ctx.pressedId = pressedId[0] ? pressedId : waitId[0] ? waitId : nullptr;
   ctx.stale = staleShown;
   ctx.wifi = wifiShown;
   return ctx;
@@ -512,6 +528,11 @@ void loop() {
 
   handleTouch();
   rotate();
+  // Сервер не ответил — отпускаем кнопку, иначе панель перестанет принимать нажатия.
+  if (waitId[0] && static_cast<int32_t>(millis() - waitUntil) >= 0) {
+    waitId[0] = '\0';
+    dirty = true;
+  }
 
   // Часы и метка «нет связи» меняются редко — перерисовка только по факту.
   char t[8];
