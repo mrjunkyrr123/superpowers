@@ -422,7 +422,7 @@ static void draw() {
 // Смена экрана: подсветка плавно гаснет, кадр меняется в темноте, подсветка плавно
 // зажигается. Кроссфейд кадра — это сотни КБ через PSRAM за шаг, он вернёт дрожь;
 // подсветку ведёт таймер, память не занята. Новый кадр собирается, пока свет гаснет.
-static const int FADE_MS = 180;
+static const int FADE_MS = 360;
 
 static void drawFaded() {
   const int lit = litBrightness < 0 ? brightness : litBrightness;
