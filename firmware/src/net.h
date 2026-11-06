@@ -12,6 +12,10 @@ bool netBegin(const Config &c);   // WiFi + NTP + OTA
 void netLoop();                   // OTA и переподключение WiFi
 bool netOnline();
 
+// Радио по расписанию (панель 480x480): включённый Wi-Fi мешает экрану на том же чипе.
+bool netWake(const Config &c);    // включить и подключиться, до 15 с
+void netSleep();                  // выключить радио совсем
+
 // body/etag заполняются только при Fetch::Updated.
 Fetch fetchDisplayList(const Config &c, String &body, String &etag);
 

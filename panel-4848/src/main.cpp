@@ -21,7 +21,11 @@
 
 static const uint32_t FRAME_MS          = 40;   // для бегущей строки; без неё — по событию
 static const uint32_t DEFAULT_POLL      = 20;   // секунд, если сервер не сказал иначе
-static const uint32_t HEARTBEAT_MS      = 60UL * 1000;
+static const uint32_t HEARTBEAT_MS      = 5UL * 60 * 1000;  // каждый запрос — это время радио
+// Радио выключено почти всё время: с ним на экране полосы (без Wi-Fi их нет, проверено).
+// Включается за данными и на нажатия. После старта держим его, чтобы успеть прошить по воздуху.
+static const uint32_t BOOT_ONLINE_MS    = 3UL * 60 * 1000;
+static const uint32_t ACTION_HOLD_MS    = 30UL * 1000;      // второе касание — без ожидания связи
 static const uint32_t NO_DATA_REBOOT_MS = 20UL * 60 * 1000;
 
 static uint16_t *frame = nullptr;
@@ -63,10 +67,12 @@ static int  brightness = 70, litBrightness = -1;
 static char clockBuf[8] = "--:--";
 static bool staleShown  = false;
 static int8_t wifiShown = -1;   // дуг на значке Wi-Fi, -1 — нет связи
+// Радио почти всегда выключено, поэтому значок показывает сигнал последнего сеанса.
+static volatile int8_t wifiNow = -1;
+static volatile bool   wifiAlways = false;  // сервер просит держать радио (прошивка по воздуху)
 
 // Пороги как у телефонов: от −60 dBm три дуги, от −70 две, от −80 одна, слабее — точка.
 static int8_t wifiLevel() {
-  if (demo || !netOnline()) return -1;
   const int rssi = WiFi.RSSI();
   return rssi >= -60 ? 3 : rssi >= -70 ? 2 : rssi >= -80 ? 1 : 0;
 }
@@ -152,6 +158,7 @@ static bool applyBody(const char *json) {
   const uint32_t poll = doc["poll_interval"] | DEFAULT_POLL;
   pollMs = constrain(poll, 5UL, 3600UL) * 1000;
   brightness = constrain(doc["brightness"] | 70, 5, 100);
+  wifiAlways = doc["wifi_always"] | false;
   return true;
 }
 
@@ -191,28 +198,50 @@ static void pollOnce() {
 }
 
 static void netTask(void *) {
-  netBegin(cfg);                 // до 20 с — экран в это время живёт
+  bool awake = netBegin(cfg);    // до 20 с — экран в это время живёт
+  uint32_t holdUntil = millis() + BOOT_ONLINE_MS;
   uint32_t lastPoll = 0, lastBeat = millis();
   bool first = true;
   for (;;) {
-    netLoop();
-    Action a;
-    if (xQueueReceive(actionQ, &a, 0) == pdTRUE) {
-      const int code = sendAction(cfg, a.method, a.path, a.id);
-      Serial.printf("  ответ сервера на %s: %d\n", a.id, code);
-      // Сервер мог поменять экран в ответ на нажатие — переспросим сразу.
-      if (code >= 200 && code < 300) pollNow = true;
-    }
     const uint32_t now = millis();
-    if (first || pollNow || now - lastPoll >= pollMs) {
-      first = false;
-      pollNow = false;
-      lastPoll = now;
-      pollOnce();
+    const bool pollDue = first || pollNow || now - lastPoll >= pollMs;
+    if (!awake && (pollDue || uxQueueMessagesWaiting(actionQ))) {
+      awake = netWake(cfg);
+      if (!awake) {
+        wifiNow = -1;
+        first = false;
+        pollNow = false;
+        lastPoll = now;          // не долбим точку доступа — следующая попытка по сроку
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        continue;
+      }
     }
-    if (now - lastBeat >= HEARTBEAT_MS) {
-      lastBeat = now;
-      sendHeartbeat(cfg, etag, now / 1000);
+    if (awake) {
+      netLoop();
+      wifiNow = netOnline() ? wifiLevel() : -1;
+      Action a;
+      if (xQueueReceive(actionQ, &a, 0) == pdTRUE) {
+        const int code = sendAction(cfg, a.method, a.path, a.id);
+        Serial.printf("  ответ сервера на %s: %d\n", a.id, code);
+        holdUntil = millis() + ACTION_HOLD_MS;
+        // Сервер мог поменять экран в ответ на нажатие — переспросим сразу.
+        if (code >= 200 && code < 300) pollNow = true;
+      }
+      if (first || pollNow || millis() - lastPoll >= pollMs) {
+        first = false;
+        pollNow = false;
+        lastPoll = millis();
+        pollOnce();
+      }
+      if (millis() - lastBeat >= HEARTBEAT_MS) {
+        lastBeat = millis();
+        sendHeartbeat(cfg, etag, lastBeat / 1000);
+      }
+      // Пока данных нет вовсе, радио не гасим: на экране заглушка, полосы не важны.
+      if (!wifiAlways && lastOkMs && static_cast<int32_t>(millis() - holdUntil) >= 0) {
+        netSleep();
+        awake = false;
+      }
     }
     vTaskDelay(pdMS_TO_TICKS(20));
   }
@@ -496,15 +525,10 @@ void loop() {
     staleShown = stale;
     dirty = true;
   }
-  // Сигнал раз в 5 с; перерисовка — только когда меняется число дуг.
-  static uint32_t lastWifiCheck = 0;
-  if (millis() - lastWifiCheck >= 5000) {
-    lastWifiCheck = millis();
-    const int8_t lv = wifiLevel();
-    if (lv != wifiShown) {
-      wifiShown = lv;
-      dirty = true;
-    }
+  // Перерисовка — только когда меняется число дуг.
+  if (wifiNow != wifiShown) {
+    wifiShown = wifiNow;
+    dirty = true;
   }
   // Экран-заглушка ловит появление сети раз в секунду.
   if (!haveData && millis() - lastFrame >= 1000) dirty = true;

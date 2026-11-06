@@ -24,6 +24,34 @@ static String endpoint(const Config &c, const char *suffix) {
 
 bool netOnline() { return WiFi.status() == WL_CONNECTED; }
 
+// Запомненная точка доступа: с каналом и BSSID подключение идёт без поиска сети.
+static int32_t apChannel = 0;
+static uint8_t apBssid[6];
+
+static void rememberAp() {
+  apChannel = WiFi.channel();
+  memcpy(apBssid, WiFi.BSSID(), sizeof(apBssid));
+}
+
+bool netWake(const Config &c) {
+  WiFi.mode(WIFI_STA);
+  if (apChannel) WiFi.begin(c.ssid.c_str(), c.pass.c_str(), apChannel, apBssid);
+  else           WiFi.begin(c.ssid.c_str(), c.pass.c_str());
+  const uint32_t deadline = millis() + 15000;
+  while (!netOnline() && millis() < deadline) delay(50);
+  if (!netOnline()) {
+    apChannel = 0;               // точка могла сменить канал — в следующий раз ищем заново
+    return false;
+  }
+  rememberAp();
+  return true;
+}
+
+void netSleep() {
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+}
+
 bool netBegin(const Config &c) {
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
@@ -37,6 +65,7 @@ bool netBegin(const Config &c) {
   }
   Serial.printf("WiFi: %s, RSSI %d dBm\n", WiFi.localIP().toString().c_str(),
                 WiFi.RSSI());
+  rememberAp();
 
   configTime(0, 0, "pool.ntp.org", "time.google.com");
   setenv("TZ", TZ_INFO, 1);
