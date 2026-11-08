@@ -43,7 +43,7 @@ ICON = {
     'air-conditioning': '', 'sofa': '', 'bed': '', 'sunrise': '',
 }
 # Значок по слову в названии, если в config.json не задан "icon".
-GUESS = [('ламп', 'bulb'), ('ночник', 'lamp'), ('свет', 'bulb'), ('комп', 'device-desktop'),
+GUESS = [('коридор', 'lamp-2'), ('ламп', 'bulb'), ('ночник', 'lamp'), ('свет', 'bulb'), ('комп', 'device-desktop'),
          ('увлажн', 'droplet'), ('озон', 'wind'), ('кондиц', 'air-conditioning'),
          ('обогрев', 'temperature'), ('розет', 'plug'), ('утро', 'sunrise'), ('работ', 'briefcase'),
          ('кино', 'movie'), ('сон', 'moon'), ('ушёл', 'door-exit'), ('ушел', 'door-exit'),
@@ -177,17 +177,17 @@ def build(conf, st):
     for i, d in enumerate(devices):
         x, yy = M + (i % 2) * 228, y + (i // 2) * (th + 8)
         s = st.get(d['entity'], {})
-        state = s.get('state', 'unavailable')
+        state = device_state(d, st)
         name = d.get('name') or s.get('attributes', {}).get('friendly_name', d['entity'])
         ic = icon_for(dict(d, name=name))
-        if state in ('unavailable', 'unknown') or not s:
+        if state == 'unavailable':
             e += [rect(x, yy, 220, th, 'card2', 16), rect(x + 1, yy + 1, 218, th - 2, 'bg', 15),
                   disc(x + 14, yy + 12, 40, 'card'),
                   text(x + 22, yy + 20, 24, ic, 'i24', 'text3'),
                   text(x + 14, yy + th - 42, 192, name, 'b16', 'text3', el=True),
                   text(x + 14, yy + th - 22, 192, 'нет связи', 'm14', 'crit')]
             continue
-        on = state in ('on', 'open', 'opening')
+        on = state == 'on'
         e += [rect(x, yy, 220, th, 'card', 16),
               disc(x + 14, yy + 12, 40, 'accent' if on else 'card2'),
               text(x + 22, yy + 20, 24, ic, 'i24', 'text' if on else 'text2')]
@@ -215,6 +215,23 @@ def build(conf, st):
 
 def allowed(conf):
     return {d['entity'] for d in conf.get('devices', [])} | {s['entity'] for s in conf.get('scenes', [])}
+
+
+def group_of(conf, entity):
+    """Кнопка на несколько выключателей: {"entity": "group.<имя>", "entities": [...]}.
+    Её entity — только имя для пути, в HA такой сущности нет."""
+    return next((d['entities'] for d in conf.get('devices', [])
+                 if d['entity'] == entity and d.get('entities')), None)
+
+
+def device_state(d, st):
+    """Состояние плитки: у группы — горит, если горит хоть один; нет связи — если молчат все."""
+    ids = d.get('entities') or [d['entity']]
+    states = [st.get(i, {}).get('state', 'unavailable') for i in ids]
+    live = [s for s in states if s not in ('unavailable', 'unknown')]
+    if not live:
+        return 'unavailable'
+    return 'on' if any(s in ('on', 'open', 'opening') for s in live) else 'off'
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -269,8 +286,26 @@ class Handler(BaseHTTPRequestHandler):
         if not self._ok_token():
             return self._send(401)
         entity = parts[5]
-        if entity not in allowed(load_config()):
+        conf = load_config()
+        if entity not in allowed(conf):
             return self._send(403)
+        group = group_of(conf, entity)
+        if group:
+            # Горит хоть один — гасим все, иначе включаем все: «переключить» каждый по
+            # отдельности рассинхронил бы их навсегда.
+            try:
+                st = {i: ha('/api/states/' + i) or {} for i in group}
+                on = device_state({'entity': entity, 'entities': group}, st) == 'on'
+                svc = 'turn_off' if on else 'turn_on'
+                for dom in sorted({i.split('.')[0] for i in group}):
+                    ha('/api/services/%s/%s' % (dom, svc),
+                       {'entity_id': [i for i in group if i.startswith(dom + '.')]})
+            except Exception as ex:
+                print('HA группа %s: %s' % (entity, ex), flush=True)
+                return self._send(502)
+            time.sleep(0.4)
+            print('  %s (%s) -> %s' % (entity, ', '.join(group), svc), flush=True)
+            return self._send(200, b'{"ok":true}')
         domain = entity.split('.')[0]
         service = 'scene/turn_on' if domain == 'scene' else (domain + '/toggle' if domain in TOGGLE else None)
         if not service:

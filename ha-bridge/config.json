@@ -4,7 +4,12 @@
     { "name": "Метео", "temperature": "sensor.datchik_meteo_temperature", "humidity": "sensor.datchik_meteo_humidity", "co2": "sensor.datchik_meteo_carbon_dioxide" }
   ],
   "devices": [
-    { "entity": "switch.lampa_switch_1", "name": "Лампа Даши" },
+    { "entity": "light.spalnia_lampa", "name": "Лампа" },
+    { "entity": "group.svet_spalni", "name": "Свет спальни", "icon": "bulb",
+      "entities": ["light.spalnia_levyi_vykliuchatel", "light.spalnia_pravyi_vykliuchatel"] },
+    { "entity": "switch.koridor_koridor", "name": "Коридор" },
+    { "entity": "switch.koridor_vannaia_koridor", "name": "Ванная коридор" },
+    { "entity": "switch.lampa_switch_1", "name": "Лампа Даши", "icon": "lamp" },
     { "entity": "switch.uvlazhnitel", "name": "Увлажнитель" }
   ],
   "scenes": []
