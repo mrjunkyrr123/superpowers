@@ -121,10 +121,7 @@ static void onPageChanged() {
   dirty = true;
 }
 
-// Пролистал руками — экран держится столько, потом автосмена продолжается.
-static const uint32_t MANUAL_HOLD_MS = 60UL * 1000;
-static uint32_t holdUntil = 0;          // 0 — автосмена идёт как обычно
-
+// Экраны листаются только свайпом (владелец, 08.11.2026): dwell с сервера не используется.
 static bool fadeNext = false;   // следующий кадр — через затухание подсветки
 
 static void turnPage(int delta) {
@@ -150,20 +147,25 @@ static bool applyBody(const char *json) {
   }
 
   const size_t oldPages = haveData ? doc["pages"].size() : 0;
+  // Экраны листают руками: появился или пропал «Внимание» — остаёмся на том же экране.
+  char oldId[24] = "";
+  if (haveData) strlcpy(oldId, currentPage()["id"] | "", sizeof(oldId));
   doc = std::move(fresh);
   haveData = true;
   // Кнопки могли сдвинуться: нажатие под пальцем отменяем, ждать ответа больше нечего.
   pressedId[0] = '\0';
   waitId[0] = '\0';
 
-  // Те же экраны с новыми цифрами — остаёмся, где были, и не сбрасываем
-  // ни паузу после свайпа, ни бегущую строку. Другое число экранов — с начала.
+  // Те же экраны с новыми цифрами — остаёмся, где были, бегущую строку не сбрасываем.
+  // Другое число экранов — ищем тот же экран по id, нет его — первый.
   if (doc["pages"].size() == oldPages) {
     refreshBands();
     dirty = true;
   } else {
     pageIdx = 0;
-    holdUntil = 0;
+    const size_t n = doc["pages"].size();
+    for (size_t i = 0; i < n && oldId[0]; ++i)
+      if (!strcmp(doc["pages"][i]["id"] | "", oldId)) pageIdx = i;
     onPageChanged();
   }
 
@@ -281,19 +283,6 @@ static void takeFreshBody() {
                   (unsigned)doc["pages"].size());
 }
 
-// dwell 0 или одна страница — ротации нет.
-static void rotate() {
-  if (doc["pages"].size() < 2) return;
-  if (holdUntil) {
-    if (static_cast<int32_t>(millis() - holdUntil) < 0) return;
-    holdUntil = 0;
-    turnPage(+1);
-    return;
-  }
-  const uint32_t dwell = (currentPage()["dwell"] | 0) * 1000UL;
-  if (waitId[0]) return;         // ждём ответа на нажатие — экран не листаем
-  if (dwell && millis() - pageStart >= dwell) turnPage(+1);
-}
 
 static void draw();
 
@@ -347,8 +336,6 @@ static void handleTouch() {
     const int16_t dx = lastX - startX, dy = lastY - startY;
     if (moved && abs(dx) >= SWIPE_MIN && abs(dx) > 2 * abs(dy)) {
       turnPage(dx < 0 ? +1 : -1);     // влево — следующий, как в телефоне
-      holdUntil = millis() + MANUAL_HOLD_MS;
-      if (!holdUntil) holdUntil = 1;  // 0 занят под «паузы нет»
       Serial.printf("свайп %s -> экран %u\n", dx < 0 ? "влево" : "вправо", pageIdx + 1);
     } else if (pressedId[0]) {
       // Срабатывает при отпускании над кнопкой: увёл палец — передумал.
@@ -536,7 +523,6 @@ void loop() {
   }
 
   handleTouch();
-  rotate();
   // Сервер не ответил — отпускаем кнопку, иначе панель перестанет принимать нажатия.
   if (waitId[0] && static_cast<int32_t>(millis() - waitUntil) >= 0) {
     waitId[0] = '\0';
