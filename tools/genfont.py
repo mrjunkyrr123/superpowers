@@ -209,30 +209,62 @@ def build_hand_font():
     return out, HAND_ROWS, HAND_BASELINE
 
 
-def build_ttf_font(path, size, charset):
+def build_ttf_font(path, size, charset, bpp=1, line=None):
+    """bpp=1 — точка есть/нет; bpp=4 — 16 градаций, сглаживание по фону.
+    line — высота строки из макета: текст стоит посередине строки, как в Figma."""
     from PIL import Image, ImageDraw, ImageFont
+    from fontTools.ttLib import TTFont
     font = ImageFont.truetype(path, size)
     ascent, descent = font.getmetrics()
+    # Шаг буквы — из метрик шрифта без хинтинга, как в Figma. PIL округляет его по
+    # буквам с хинтингом, и строка Onest 16 выходила на 5 % шире макета.
+    tt = TTFont(path)
+    cmap, hmtx, upm = tt.getBestCmap(), tt['hmtx'], tt['head'].unitsPerEm
     pad = size * 2
     out = {}
     for ch in charset:
         img = Image.new('L', (pad, ascent + descent + 4), 0)
         d = ImageDraw.Draw(img)
-        d.fontmode = '1'          # без сглаживания: панель одноцветная на пиксель
+        if bpp == 1:
+            d.fontmode = '1'      # без сглаживания: табло одноцветное на пиксель
         d.text((2, 2), ch, font=font, fill=255)
         px = img.load()
-        matrix = [[1 if px[x, y] > 127 else 0 for x in range(img.width)]
-                  for y in range(img.height)]
+        if bpp == 1:
+            matrix = [[1 if px[x, y] > 127 else 0 for x in range(img.width)]
+                      for y in range(img.height)]
+        else:
+            matrix = [[(px[x, y] * 15 + 127) // 255 for x in range(img.width)]
+                      for y in range(img.height)]
         bits, w, h, dx, ytop = trim(matrix)
-        adv = int(round(font.getlength(ch)))
+        if ord(ch) in cmap:
+            adv = int(round(hmtx[cmap[ord(ch)]][0] * size / upm))
+        else:
+            adv = int(round(font.getlength(ch)))
         baseline = 2 + ascent
         out[ch] = dict(bits=bits, w=w, h=h, dx=dx - 2,
                        dy=ytop - baseline, adv=adv)
+    if line:
+        return out, line, (line - ascent - descent) // 2 + ascent
     return out, ascent + descent, ascent
 
 
-def pack(glyphs):
-    """Глифы -> (byte-массив, отсортированный список записей)."""
+def load_kept_font(name):
+    """Растр шрифта из прошлой генерации (mock-server/fonts.json) — без пересборки.
+    Так старые кегли не сдвигаются ни на пиксель, а TTF для них на машине не нужен."""
+    path = os.path.join(ROOT, 'mock-server/fonts.json')
+    with open(path, encoding='utf-8') as fh:
+        f = json.load(fh)[name]
+    out = {}
+    for cp, g in f['glyphs'].items():
+        bits = [[int(c, 16) for c in row] for row in g['bits']]
+        out[chr(int(cp))] = dict(bits=bits, w=len(bits[0]) if bits else 0, h=len(bits),
+                                 dx=g['dx'], dy=g['dy'], adv=g['adv'])
+    return out, f['yAdvance'], f['baseline']
+
+
+def pack(glyphs, bpp=1):
+    """Глифы -> (byte-массив, отсортированный список записей).
+    Точки строк подряд, без выравнивания: 1 бит — MSB-first, 4 бита — старший полубайт первым."""
     blob = bytearray()
     entries = []
     for ch in sorted(glyphs, key=ord):
@@ -241,8 +273,8 @@ def pack(glyphs):
         acc, nbits = 0, 0
         for row in g['bits']:
             for b in row:
-                acc = (acc << 1) | b
-                nbits += 1
+                acc = (acc << bpp) | b
+                nbits += bpp
                 if nbits == 8:
                     blob.append(acc)
                     acc, nbits = 0, 0
@@ -260,32 +292,43 @@ CHARSET = ([chr(c) for c in range(0x20, 0x7F)] +
            ['Ё', 'ё', '°', '—'] +
            [chr(c) for c in range(0x410, 0x450)])
 
-DEJAVU = '/usr/share/fonts/truetype/dejavu'
+# Знаки макета панели 4848 (дизайн 08.11.2026) сверх базового набора.
+CHARSET_ONEST = CHARSET + list('₽«»№·…✓−')
 
-# Мелкие кегли остались от панели 64x32 — на ней они были единственным
-# вариантом. Крупные добавлены под экран 480x480: при 0,15 мм на пиксель
-# шрифт 32 px даёт букву ~4,8 мм, это комфортно читается с полутора метров.
+ONEST = os.path.join(HERE, 'fonts')
+
+# (имя, вид, файл, кегль, бит на точку, высота строки из макета)
+#
+# DejaVu — от табло 64x32 и первой вёрстки 480x480; 'keep' берёт их растр из прошлой
+# генерации как есть. Onest — шрифт макета 08.11: 4 бита (сглаживание), высота строки
+# и имена кеглей — из tokens.json дизайнера. b16 и b48 теперь Onest.
 FONTS = [
-    ('f5',  'hand', None, 0),
-    ('r12', 'ttf', f'{DEJAVU}/DejaVuSans.ttf', 12),
-    ('b13', 'ttf', f'{DEJAVU}/DejaVuSans-Bold.ttf', 13),
-    ('b16', 'ttf', f'{DEJAVU}/DejaVuSans-Bold.ttf', 16),
-    ('r20', 'ttf', f'{DEJAVU}/DejaVuSans.ttf', 20),
-    ('r28', 'ttf', f'{DEJAVU}/DejaVuSans.ttf', 28),
-    ('b24', 'ttf', f'{DEJAVU}/DejaVuSans-Bold.ttf', 24),
-    ('b32', 'ttf', f'{DEJAVU}/DejaVuSans-Bold.ttf', 32),
-    ('b48', 'ttf', f'{DEJAVU}/DejaVuSans-Bold.ttf', 48),
+    ('f5',  'hand', None, 0, 1, None),
+    ('r12', 'keep', None, 0, 1, None),
+    ('b13', 'keep', None, 0, 1, None),
+    ('r20', 'keep', None, 0, 1, None),
+    ('r28', 'keep', None, 0, 1, None),
+    ('b24', 'keep', None, 0, 1, None),
+    ('b32', 'keep', None, 0, 1, None),
+    ('m14', 'ttf', f'{ONEST}/onest-500.ttf', 14, 4, 18),
+    ('m16', 'ttf', f'{ONEST}/onest-500.ttf', 16, 4, 20),
+    ('b16', 'ttf', f'{ONEST}/onest-700.ttf', 16, 4, 20),
+    ('b20', 'ttf', f'{ONEST}/onest-700.ttf', 20, 4, 26),
+    ('b28', 'ttf', f'{ONEST}/onest-700.ttf', 28, 4, 34),
+    ('b48', 'ttf', f'{ONEST}/onest-700.ttf', 48, 4, 58),
 ]
 
 
 def build_all():
     built = {}
-    for name, kind, path, size in FONTS:
+    for name, kind, path, size, bpp, line in FONTS:
         if kind == 'hand':
             glyphs, ya, base = build_hand_font()
+        elif kind == 'keep':
+            glyphs, ya, base = load_kept_font(name)
         else:
-            glyphs, ya, base = build_ttf_font(path, size, CHARSET)
-        built[name] = (glyphs, ya, base)
+            glyphs, ya, base = build_ttf_font(path, size, CHARSET_ONEST, bpp, line)
+        built[name] = (glyphs, ya, base, bpp)
     return built
 
 
@@ -293,7 +336,7 @@ def emit_c(built):
     hdr = ['// Сгенерировано tools/genfont.py — не редактировать вручную.',
            '#pragma once', '#include <stdint.h>', '',
            'struct GfxGlyph {',
-           '  uint16_t off;      // смещение в bitmap',
+           '  uint32_t off;      // смещение в bitmap (4 бита на 48 px — больше 64 КБ)',
            '  uint8_t  w, h;     // размер в пикселях',
            '  int8_t   dx, dy;   // сдвиг от курсора / базовой линии',
            '  uint8_t  adv;      // шаг курсора',
@@ -305,12 +348,13 @@ def emit_c(built):
            '  uint16_t        count;',
            '  uint8_t         yAdvance;  // шаг между строками',
            '  uint8_t         baseline;  // от верха строки до базовой линии',
+           '  uint8_t         bpp;       // 1 — точка есть/нет, 4 — 16 градаций (сглаживание)',
            '};', '']
     src = ['// Сгенерировано tools/genfont.py — не редактировать вручную.',
            '#include "fonts.h"', '']
     names = []
-    for name, (glyphs, ya, base) in built.items():
-        blob, entries = pack(glyphs)
+    for name, (glyphs, ya, base, bpp) in built.items():
+        blob, entries = pack(glyphs, bpp)
         rows = [', '.join(f'0x{b:02X}' for b in blob[i:i + 16])
                 for i in range(0, len(blob), 16)]
         src += [f'static const uint8_t {name}_bm[] = {{'] + \
@@ -325,7 +369,7 @@ def emit_c(built):
                 for i in range(0, len(cps), 12)]
         src += ['};', '',
                 f'const GfxFont FONT_{name.upper()} = {{{name}_bm, {name}_gl, '
-                f'{name}_cp, {len(entries)}, {ya}, {base}}};', '']
+                f'{name}_cp, {len(entries)}, {ya}, {base}, {bpp}}};', '']
         hdr.append(f'extern const GfxFont FONT_{name.upper()};')
         names.append(name)
 
@@ -340,25 +384,28 @@ def emit_c(built):
         src.append(f'  if (!strcmp(name, "{n}")) return &FONT_{n.upper()};')
     src += ['  return nullptr;', '}', '']
 
-    open(os.path.join(ROOT, 'firmware/src/fonts.h'), 'w').write('\n'.join(hdr) + '\n')
-    open(os.path.join(ROOT, 'firmware/src/fonts.cpp'), 'w').write('\n'.join(src) + '\n')
+    for fn, lines in (('fonts.h', hdr), ('fonts.cpp', src)):
+        with open(os.path.join(ROOT, 'firmware/src', fn), 'w', encoding='utf-8', newline='\n') as fh:
+            fh.write('\n'.join(lines) + '\n')
 
 
 def emit_json(built):
     """Тот же растр для серверного превью — единый источник истины."""
     out = {}
-    for name, (glyphs, ya, base) in built.items():
+    for name, (glyphs, ya, base, bpp) in built.items():
         out[name] = {
             'yAdvance': ya,
             'baseline': base,
+            'bpp': bpp,
+            # Точка — одна шестнадцатеричная цифра: 0/1 при bpp=1, 0..f при bpp=4.
             'glyphs': {
-                str(ord(ch)): {'bits': [''.join(str(b) for b in row) for row in g['bits']],
+                str(ord(ch)): {'bits': [''.join(f'{b:x}' for b in row) for row in g['bits']],
                                'dx': g['dx'], 'dy': g['dy'], 'adv': g['adv']}
                 for ch, g in glyphs.items()
             },
         }
     path = os.path.join(ROOT, 'mock-server/fonts.json')
-    with open(path, 'w') as fh:
+    with open(path, 'w', encoding='utf-8') as fh:
         json.dump(out, fh, ensure_ascii=False, separators=(',', ':'))
 
 
@@ -366,10 +413,10 @@ def main():
     built = build_all()
     emit_c(built)
     emit_json(built)
-    for name, (glyphs, ya, base) in built.items():
-        blob, _ = pack(glyphs)
+    for name, (glyphs, ya, base, bpp) in built.items():
+        blob, _ = pack(glyphs, bpp)
         print(f'{name:5s} глифов={len(glyphs):3d} yAdvance={ya:2d} '
-              f'baseline={base:2d} растр={len(blob):5d} Б')
+              f'baseline={base:2d} бит={bpp} растр={len(blob):6d} Б')
 
 
 if __name__ == '__main__':

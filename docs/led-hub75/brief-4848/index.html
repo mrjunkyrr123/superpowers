@@ -1,0 +1,296 @@
+<title>Экраны настольной панели 4848</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Рабочий бриф: одна колонка текста ~68 знаков, картинки экранов шире, таблицы в своих скроллах. */
+:root {
+  --bg: #F6F5F6;
+  --surface: #FFFFFF;
+  --fg: #19171A;
+  --fg2: #5D5960;
+  --line: #E2DFE3;
+  --accent: #D9214A;
+  --code-bg: #EFEDF0;
+  --ok: #0A8A0A; --warn: #A87400; --crit: #B8322F;
+  --f-body: "Onest", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121113; --surface: #1B1A1C; --fg: #EDEBEE; --fg2: #A29EA5; --line: #2E2C30;
+  --accent: #F2496C; --code-bg: #242226; --ok: #3DBA3D; --warn: #E5A92A; --crit: #E3615D; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #121113; --surface: #1B1A1C; --fg: #EDEBEE; --fg2: #A29EA5; --line: #2E2C30;
+  --accent: #F2496C; --code-bg: #242226; --ok: #3DBA3D; --warn: #E5A92A; --crit: #E3615D; color-scheme: dark }
+
+body { background: var(--bg); color: var(--fg); font: 16px/1.6 var(--f-body); padding-inline: 16px; padding-block: 40px 80px; }
+.wrap { max-width: 1040px; margin: 0 auto; display: grid; gap: 56px; }
+.text { max-width: 68ch; }
+header { display: grid; gap: 12px; }
+.eyebrow { font: 600 12px/1 var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+h1 { font-size: clamp(30px, 5vw, 44px); line-height: 1.1; font-weight: 700; margin: 0; text-wrap: balance; }
+h2 { font-size: 24px; line-height: 1.25; margin: 0 0 16px; text-wrap: balance; }
+h3 { font-size: 17px; margin: 24px 0 8px; }
+p { margin: 0 0 12px; }
+ul, ol { margin: 0 0 12px; padding-left: 22px; }
+li { margin-bottom: 6px; }
+.lead { font-size: 18px; color: var(--fg2); }
+code, .mono { font-family: var(--f-mono); font-size: .88em; }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+section { display: grid; gap: 4px; }
+
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.facts div { background: var(--surface); padding: 14px 16px; display: grid; gap: 2px; min-width: 0; }
+.facts b { font: 600 20px/1.2 var(--f-mono); }
+.facts span { color: var(--fg2); font-size: 13px; }
+
+figure { margin: 0; display: grid; gap: 8px; }
+figure img { width: 100%; height: auto; image-rendering: pixelated; border-radius: 6px; display: block; }
+figcaption { color: var(--fg2); font-size: 13px; }
+
+.screens { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 32px 24px; }
+.screen { display: grid; gap: 10px; align-content: start; min-width: 0; }
+.screen img { width: 100%; max-width: 480px; image-rendering: pixelated; border-radius: 6px; }
+.screen h3 { margin: 4px 0 0; }
+.screen ul { font-size: 14.5px; color: var(--fg2); }
+.screen ul li::marker { color: var(--crit); }
+
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: 0; }
+th { font: 600 12px/1.3 var(--f-mono); letter-spacing: .05em; text-transform: uppercase; color: var(--fg2); white-space: nowrap; }
+td.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sw { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: -2px; margin-right: 8px; border: 1px solid var(--line); }
+
+.yes { color: var(--ok); font-weight: 600; }
+.no { color: var(--crit); font-weight: 600; }
+.maybe { color: var(--warn); font-weight: 600; }
+
+.callout { border-left: 3px solid var(--accent); background: var(--surface); padding: 14px 18px; border-radius: 0 8px 8px 0; }
+.callout p:last-child { margin: 0; }
+hr { border: 0; border-top: 1px solid var(--line); margin: 0; }
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">ТЗ дизайнеру · ESP32-S3-4848S040 · 480 × 480</div>
+  <h1>Экраны настольной панели</h1>
+  <p class="lead text">Квадратный сенсорный экран 4″ стоит на столе у руководителя RECOROOM (сеть капсул сна в аэропортах). На него смотрят мельком, с 50–70 см. Задача экрана — за пару секунд сказать: что сделать сегодня, нет ли пожара на точках, как идут деньги. Последний экран — пульт умного дома. Сейчас экраны собраны инженером из примитивов и выглядят как отладочный вывод. Нужен нормальный дизайн с учётом жёстких ограничений железа.</p>
+</header>
+
+<div class="facts">
+  <div><b>480 × 480</b><span>пикселей, ~0,15 мм на пиксель, 4″</span></div>
+  <div><b>6 экранов</b><span>листаются свайпом по кругу</span></div>
+  <div><b>RGB565</b><span>65 тыс. цветов, без прозрачности</span></div>
+  <div><b>1 бит</b><span>шрифты без сглаживания, сейчас DejaVu Sans</span></div>
+</div>
+
+<section>
+  <h2>Как сейчас</h2>
+  <figure>
+    <img src="img/all.png" alt="Шесть экранов панели в текущем виде: задачи, внимание, сегодня, месяц, 7 дней, дом" width="1536" height="1032">
+    <figcaption>Рендер тем же кодом, что на плате, пиксель в пиксель. Данные выдуманные. Внизу каждого экрана — полоски номера экрана.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>Что не так, по экранам</h2>
+  <div class="screens">
+    <div class="screen">
+      <img src="img/1-tasks.png" alt="Экран задач" width="960" height="960">
+      <h3>1. Задачи на сегодня</h3>
+      <ul>
+        <li>Названия режутся на 32 знаке посреди слова, хотя справа от текста пусто.</li>
+        <li>Кнопка «сделано» — пустой тёмный квадрат: не читается как галочка.</li>
+        <li>Пометки «просрочено», «личное» мелкие и серые, просрочка не бросается в глаза.</li>
+        <li>Нижняя половина экрана пустая, а строки слиплись.</li>
+      </ul>
+    </div>
+    <div class="screen">
+      <img src="img/2-alerts.png" alt="Экран внимания" width="960" height="960">
+      <h3>2. Внимание</h3>
+      <ul>
+        <li>Появляется, только когда есть проблемы. Красная проблема и жёлтая отличаются только тонкой полоской слева.</li>
+        <li>Карточки одинаковой высоты, даже если в них одна строка.</li>
+        <li>Нет способа сказать «видел» (кнопка «Понял» запланирована).</li>
+      </ul>
+    </div>
+    <div class="screen">
+      <img src="img/3-today.png" alt="Экран сегодня" width="960" height="960">
+      <h3>3. Сегодня</h3>
+      <ul>
+        <li>Таблица до 10 точек — плотная, названия точек мельче цифр.</li>
+        <li>«занято 11 из 21 / аренд 47» висит справа без привязки к сетке.</li>
+        <li>Колонка «Зан/своб» непонятна без подписи: 2/0 — это что?</li>
+      </ul>
+    </div>
+    <div class="screen">
+      <img src="img/4-month.png" alt="Экран месяца" width="960" height="960">
+      <h3>4. Месяц</h3>
+      <ul>
+        <li>Четыре карточки в стопку, все одного веса — непонятно, что главное.</li>
+        <li>Подпись «Поступило за месяц» набрана крупнее подписей карточек без причины.</li>
+      </ul>
+    </div>
+    <div class="screen">
+      <img src="img/5-week.png" alt="Экран 7 дней" width="960" height="960">
+      <h3>5. 7 дней</h3>
+      <ul>
+        <li>Самый приличный экран. Линия среднего сливается со столбиками, подпись к ней внизу мелко.</li>
+      </ul>
+    </div>
+    <div class="screen">
+      <img src="img/6-home.png" alt="Экран дом" width="960" height="960">
+      <h3>6. Дом</h3>
+      <ul>
+        <li>Верстается отдельной программой (мостик к Home Assistant), поэтому другой «почерк»: радиусы, отступы.</li>
+        <li>«вкл/выкл» прижато в угол мелким шрифтом, название — по центру. Включённое отличается только кислотным зелёным.</li>
+        <li>Недоступное устройство похоже на выключенное.</li>
+        <li>Датчики («Метео», «Датчик») — две плашки без иерархии.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="text">
+  <h2>Общая беда</h2>
+  <ul>
+    <li><b>Шрифт.</b> DejaVu Sans, однобитный растр без сглаживания — отсюда «технический» вид. Шрифт можно заменить любым TTF с кириллицей; в планах был Onest.</li>
+    <li><b>Нет системы.</b> Отступы, радиусы и кегли подбирались по месту на каждом экране.</li>
+    <li><b>Текст режется по числу знаков, а не по ширине:</b> сервер не умеет мерить строку. Дизайну нужны лимиты в знаках.</li>
+    <li><b>Нет иконок.</b> Это было решение прошлого дизайна — можно пересмотреть, см. «что можно добавить».</li>
+  </ul>
+</section>
+
+<section class="text">
+  <h2>Задача</h2>
+  <ol>
+    <li>Единая визуальная система для экрана 480 × 480: сетка, отступы, шкала кеглей, палитра, радиусы, компоненты (шапка, строка задачи, карточка проблемы, строка таблицы, плитка устройства, датчик, кнопка).</li>
+    <li>Макеты всех шести экранов на максимальном и минимальном наполнении (см. таблицу ниже).</li>
+    <li>Состояния: кнопка нажата, задача «нажми ещё раз», устройство вкл / выкл / нет связи, пустые экраны («задач нет»), служебные экраны «Подключение», «Нет сети», «Нет данных» и плашка «Нет связи».</li>
+    <li>Шрифт: выбрать гарнитуру и кегли. Проверить, как она выглядит <b>без сглаживания</b> на 480 px (могу прислать растр выбранного шрифта).</li>
+  </ol>
+  <div class="callout"><p>Свобода полная в пределах ограничений ниже. Если ограничение мешает — напишите, какое и зачем: часть снимается доработкой прошивки.</p></div>
+</section>
+
+<section>
+  <h2>Что на экранах</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>Экран</th><th>Что показывает</th><th>Лимиты</th><th>Пример</th></tr></thead>
+    <tbody>
+      <tr><td>Шапка (на всех)</td><td>Название экрана, значок Wi-Fi (уровень знает плата), часы ЧЧ:ММ</td><td>Название до ~20 знаков</td><td>«ЗАДАЧИ НА СЕГОДНЯ», 14:05</td></tr>
+      <tr><td>1. Задачи</td><td>Название задачи, важность (4 квадранта Эйзенхауэра), просрочка в днях, «личное», кнопка «сделано» (два касания за 30 с)</td><td>До 10 задач + «и ещё N». Названия бывают длиной 80+ знаков</td><td>«Подписать договор с аэропортом Кольцово», просрочено 3 дн</td></tr>
+      <tr><td>2. Внимание</td><td>Проблема: статус (красный/жёлтый), заголовок, 1–2 строки пояснения</td><td>До 4 карточек; заголовок может не влезть (сейчас бегущая строка)</td><td>«Самара, капсула 2 — нет связи» / «Плата офлайн 217 мин.»</td></tr>
+      <tr><td>3. Сегодня</td><td>Выручка за день, % к тому же дню прошлой недели, занято капсул из всех, число аренд; таблица точек: выручка, аренды, занято/свободно, бельё в постамате, офлайн</td><td>До 10 точек. Название точки до 12 знаков</td><td>38 420 руб, +12%; «Самара 7 120 · 5 · 3/1 · бельё 3/12»</td></tr>
+      <tr><td>4. Месяц</td><td>Выручка за месяц, % к прошлому за те же дни, прогноз на месяц, среднее в день, прошлый месяц, оплачено агрегаторам</td><td>Числа до 9 знаков с пробелами</td><td>1 386 900; прогноз 2 311 500</td></tr>
+      <tr><td>5. 7 дней</td><td>Сумма за 7 дней, % к прошлой неделе, 7 столбиков по дням, линия среднего, сегодня выделено</td><td>7 столбиков всегда</td><td>241 800; столбики 29,4…41,8 тыс.</td></tr>
+      <tr><td>6. Дом</td><td>Датчики: имя, температура, влажность. Устройства: имя, вкл/выкл/нет связи, касание = переключить. Сцены: кнопка-запуск</td><td>До 2 датчиков, до 6 устройств, до 6 сцен. Имена до ~14 знаков</td><td>«Лампа», «Увлажнитель», 21,5° 45 %</td></tr>
+    </tbody>
+  </table></div>
+  <p class="text" style="margin-top:12px;color:var(--fg2)">Данные обновляются раз в минуту, «Дом» — раз в 10 с. Экраны листает только палец — автосмены нет. «Внимание» появляется лишь при проблемах, «Задачи» — всегда первые.</p>
+</section>
+
+<section>
+  <h2>Ограничения железа</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>Что</th><th>Можно?</th><th>Подробности</th></tr></thead>
+    <tbody>
+      <tr><td>Прямоугольник, заливка, рамка 1 px</td><td class="yes">да</td><td>Рамка только 1 px</td></tr>
+      <tr><td>Скруглённый прямоугольник с заливкой</td><td class="yes">да</td><td>Радиус целый, любой; круг = радиус в половину стороны</td></tr>
+      <tr><td>Линия</td><td class="yes">да</td><td>Только 1 px. Толстая линия = узкий прямоугольник</td></tr>
+      <tr><td>Текст, выравнивание влево/центр/вправо</td><td class="yes">да</td><td>Перенос строк не поддерживается — каждая строка отдельно</td></tr>
+      <tr><td>Бегущая строка</td><td class="yes">да</td><td>До 8 штук на экране, перерисовывается только её полоса</td></tr>
+      <tr><td>Скруглённая рамка без заливки</td><td class="no">нет</td><td>Обходится: два вложенных скруглённых прямоугольника</td></tr>
+      <tr><td>Иконки, картинки</td><td class="no">нет</td><td>Сейчас нет; одноцветные иконки можно добавить в прошивку</td></tr>
+      <tr><td>Сглаживание шрифтов и фигур</td><td class="no">нет</td><td>Всё попиксельно, края «лесенкой»</td></tr>
+      <tr><td>Прозрачность, тени, градиенты, блюр</td><td class="no">нет</td><td>Слои просто перекрывают друг друга</td></tr>
+      <tr><td>Анимация на весь экран, слайд между экранами</td><td class="no">нет</td><td>Кадр 460 КБ — не тянет. Переход между экранами: затемнение 0,4 с</td></tr>
+      <tr><td>Светлая тема</td><td class="maybe">можно</td><td>Сейчас только тёмная; светлый фон технически просто заливка</td></tr>
+      <tr><td>Подсветка нажатия</td><td class="maybe">как есть</td><td>Инверсия фона и текста кнопки до ответа (≤ 8 с). Можно предложить другую</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section class="text">
+  <h2>Касания</h2>
+  <ul>
+    <li>Зона касания = прямоугольник кнопки, без запаса. Самая маленькая цель сейчас 44 × 32 px (≈ 6,6 × 4,8 мм) — это на грани. Рекомендую не меньше 48 × 48.</li>
+    <li>Свайп влево/вправо — смена экрана. Значит, горизонтальные жесты внутри экрана занимать нельзя.</li>
+    <li>Нажатие срабатывает при отпускании пальца над кнопкой.</li>
+    <li>Полоски номера экрана внизу (y 460) рисует плата сама — их можно перерисовать, но место под них нужно оставить.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Шрифты и цвета сейчас</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>Имя</th><th>Начертание и кегль</th><th>Высота строки</th><th>Где сейчас</th></tr></thead>
+    <tbody>
+      <tr><td class="num">r12</td><td>Regular 12</td><td class="num">15</td><td>подписи, пояснения</td></tr>
+      <tr><td class="num">b13</td><td>Bold 13</td><td class="num">17</td><td>таблица, сцены</td></tr>
+      <tr><td class="num">b16</td><td>Bold 16</td><td class="num">19</td><td>шапка, задачи, строки</td></tr>
+      <tr><td class="num">r20</td><td>Regular 20</td><td class="num">24</td><td>подписи крупных чисел</td></tr>
+      <tr><td class="num">b24</td><td>Bold 24</td><td class="num">29</td><td>значения в карточках</td></tr>
+      <tr><td class="num">r28</td><td>Regular 28</td><td class="num">33</td><td>—</td></tr>
+      <tr><td class="num">b32</td><td>Bold 32</td><td class="num">38</td><td>сумма за неделю</td></tr>
+      <tr><td class="num">b48</td><td>Bold 48</td><td class="num">57</td><td>главное число экрана</td></tr>
+    </tbody>
+  </table></div>
+  <p class="text" style="margin-top:12px">Кегли и начертания можно менять и добавлять — шрифты пересобираются скриптом, место во флеше есть. Сейчас в шрифте нет знаков <code>₽ № « » ▲ ▼</code>; если они нужны — укажите, добавим.</p>
+
+  <div class="tbl" style="margin-top:20px"><table>
+    <thead><tr><th>Токен</th><th>Цвет</th><th>Где сейчас</th></tr></thead>
+    <tbody>
+      <tr><td class="num">bg</td><td class="num"><span class="sw" style="background:#000000"></span>#000000</td><td>фон</td></tr>
+      <tr><td class="num">text</td><td class="num"><span class="sw" style="background:#FFFFFF"></span>#FFFFFF</td><td>главные числа и названия</td></tr>
+      <tr><td class="num">text2</td><td class="num"><span class="sw" style="background:#9C9A9C"></span>#9C9A9C</td><td>подписи</td></tr>
+      <tr><td class="num">text3</td><td class="num"><span class="sw" style="background:#6B696B"></span>#6B696B</td><td>второстепенное</td></tr>
+      <tr><td class="num">line / card</td><td class="num"><span class="sw" style="background:#292829"></span>#292829 · <span class="sw" style="background:#101010"></span>#101010</td><td>разделители / карточки</td></tr>
+      <tr><td class="num">bar</td><td class="num"><span class="sw" style="background:#4A494A"></span>#4A494A</td><td>столбики</td></tr>
+      <tr><td class="num">brand</td><td class="num"><span class="sw" style="background:#EF2C52"></span>#EF2C52</td><td>метка в шапке, «сегодня» на графике</td></tr>
+      <tr><td class="num">ok / warn / crit</td><td class="num"><span class="sw" style="background:#08A208"></span><span class="sw" style="background:#F7B218"></span><span class="sw" style="background:#CE3C39"></span></td><td>только статусы</td></tr>
+    </tbody>
+  </table></div>
+  <p class="text" style="margin-top:12px;color:var(--fg2)">Цвета экран урезает до 16 бит: близкие тёмные серые могут слиться или дать оттенок. Тёмные серые проверим на самой плате.</p>
+</section>
+
+<section class="text">
+  <h2>Что можно добавить в прошивку, если дизайн попросит</h2>
+  <p>Реально, но это работа программиста — отметьте в макете, что из этого нужно:</p>
+  <ul>
+    <li>одноцветные иконки (битмапы, перекрашиваются любым цветом);</li>
+    <li>скруглённая рамка заданной толщины;</li>
+    <li>сглаженные шрифты (4 бита) — заметно красивее, стоит дороже остального;</li>
+    <li>перенос длинного текста на 2 строки по ширине.</li>
+  </ul>
+</section>
+
+<section class="text">
+  <h2>Уже решено владельцем</h2>
+  <ul>
+    <li>Задачи — всегда первый экран. Листание только свайпом.</li>
+    <li>Плана продаж на «Месяце» нет — не рисовать.</li>
+    <li>Фирменный красный — только как акцент (метка, «сегодня»), не для статусов.</li>
+    <li>Красный / жёлтый / зелёный — только для статусов.</li>
+    <li>Стрелок роста нет: знак «+12%» и цвет.</li>
+  </ul>
+</section>
+
+<section class="text">
+  <h2>Что сдать</h2>
+  <ol>
+    <li>Figma: фреймы 480 × 480 на каждый экран и состояние, в масштабе 1:1.</li>
+    <li>Токены: цвета (hex), кегли и начертания, отступы, радиусы.</li>
+    <li>Для каждого элемента — координаты x, y, ширина, высота в px от левого верхнего угла; у текста y — верх строки.</li>
+    <li>Лимиты: сколько знаков влезает в каждую строку и что делать с длинным (обрезать, бегущая строка, перенос).</li>
+    <li>Файл шрифта (TTF/OTF) с кириллицей, если меняем гарнитуру.</li>
+  </ol>
+  <p>Перед финалом пришлите макеты — я отрисую их рендером платы (без сглаживания) и верну картинку, как это будет выглядеть на самом деле.</p>
+</section>
+
+<hr>
+<p class="text" style="color:var(--fg2);font-size:14px">Срок, бюджет и связь — через Максима. Технические вопросы по ограничениям — тоже через него, отвечу в тот же день.</p>
+
+</div>

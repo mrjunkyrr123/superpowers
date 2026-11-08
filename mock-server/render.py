@@ -61,6 +61,16 @@ class Canvas:
                 self.set(x, yy, c)
                 self.set(x + w - 1, yy, c)
 
+    @staticmethod
+    def _inset(row, h, r):
+        if r <= 0:
+            return 0
+        if row < r:
+            return r - math.isqrt(r * r - (r - 1 - row) ** 2)
+        if row >= h - r:
+            return r - math.isqrt(r * r - (row - (h - r)) ** 2)
+        return 0
+
     def round_rect(self, x, y, w, h, r, c):
         """Скруглённый прямоугольник. Целочисленный корень — чтобы растр
         совпадал с прошивкой бит в бит (см. fillRoundRect в gfx.cpp)."""
@@ -68,16 +78,30 @@ class Canvas:
             return
         r = max(0, min(r, min(w, h) // 2))
         for row in range(h):
-            if r <= 0:
-                inset = 0
-            elif row < r:
-                inset = r - math.isqrt(r * r - (r - 1 - row) ** 2)
-            elif row >= h - r:
-                inset = r - math.isqrt(r * r - (row - (h - r)) ** 2)
-            else:
-                inset = 0
+            inset = self._inset(row, h, r)
             for col in range(inset, w - inset):
                 self.set(x + col, y + row, c)
+
+    def stroke_round_rect(self, x, y, w, h, r, t, c):
+        """Рамка толщиной t внутри скруглённого прямоугольника — strokeRoundRect в gfx.cpp."""
+        if w <= 0 or h <= 0 or t <= 0:
+            return
+        if 2 * t >= w or 2 * t >= h:
+            self.round_rect(x, y, w, h, r, c)
+            return
+        r = min(r, min(w, h) // 2)
+        iw, ih = w - 2 * t, h - 2 * t
+        ri = max(0, min(r - t, min(iw, ih) // 2))
+        for row in range(h):
+            oi = self._inset(row, h, r)
+            if row < t or row >= h - t:
+                spans = [(oi, w - oi)]
+            else:
+                ii = t + self._inset(row - t, ih, ri)
+                spans = [(oi, ii), (w - ii, w - oi)]
+            for a, b in spans:
+                for col in range(a, b):
+                    self.set(x + col, y + row, c)
 
     def line(self, x0, y0, x1, y1, c):
         dx, dy = abs(x1 - x0), -abs(y1 - y0)
@@ -105,28 +129,76 @@ def text_width(font_id, s):
     return sum(g[str(ord(ch))]['adv'] for ch in s if str(ord(ch)) in g)
 
 
+def _to565(c):
+    return c[0] >> 3, c[1] >> 2, c[2] >> 3
+
+
+def _from565(r, g, b):
+    """Цвет экрана RGB565 обратно в RGB888 — младшие биты повторяют старшие."""
+    return (r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2)
+
+
+def blend565(bg, fg, a):
+    """То же, что blend565 в gfx.cpp: доля fg из 15, целочисленно."""
+    if a >= 15:
+        return fg
+    if a == 0:
+        return bg
+    b5, f5 = _to565(bg), _to565(fg)
+    return _from565(*((f * a + b * (15 - a)) // 15 for f, b in zip(f5, b5)))
+
+
+def _glyph(f, ch):
+    g = f['glyphs'].get(str(ord(ch)))
+    return g if g is not None else f['glyphs'].get(str(ord('?')))
+
+
 def draw_text(cv, x, y, font_id, color, s, clip=None):
-    """y — верх строки. clip — (x0, x1) для обрезки по горизонтали."""
+    """y — верх строки. clip — (x0, x1) для обрезки по горизонтали.
+    Точка глифа — шестнадцатеричная цифра: 1 бит — '1', 4 бита — доля цвета 0..f."""
     f = FONTS.get(font_id)
     if not f:
         return 0
     base = y + f['baseline']
     cur = x
     for ch in s:
-        g = f['glyphs'].get(str(ord(ch)))
+        g = _glyph(f, ch)
         if g is None:
-            g = f['glyphs'].get(str(ord('?')))
-            if g is None:
-                continue
+            continue
         for ry, row in enumerate(g['bits']):
-            for rx, bit in enumerate(row):
-                if bit == '1':
-                    px, py = cur + g['dx'] + rx, base + g['dy'] + ry
-                    if clip and not (clip[0] <= px < clip[1]):
-                        continue
-                    cv.set(px, py, color)
+            for rx, d in enumerate(row):
+                a = int(d, 16)
+                if f.get('bpp', 1) == 1 and a:
+                    a = 15
+                if not a:
+                    continue
+                px, py = cur + g['dx'] + rx, base + g['dy'] + ry
+                if clip and not (clip[0] <= px < clip[1]):
+                    continue
+                if 0 <= px < cv.w and 0 <= py < cv.h:
+                    cv.set(px, py, blend565(cv.px[py][px], color, a))
         cur += g['adv']
     return cur - x
+
+
+def fit_text(font_id, s, max_w):
+    """То же, что fitText в gfx.cpp: не влезло — обрезать по ширине и закончить «…»."""
+    f = FONTS.get(font_id)
+    full = text_width(font_id, s)
+    if not f or full <= max_w:
+        return s, full
+    ell = '…' if str(ord('…')) in f['glyphs'] else '...'
+    ew = text_width(font_id, ell)
+    w, cut, cut_w = 0, 0, 0
+    for i, ch in enumerate(s):
+        g = _glyph(f, ch)
+        adv = g['adv'] if g else 0
+        if w + adv + ew > max_w:
+            break
+        w += adv
+        if ch != ' ':
+            cut, cut_w = i + 1, w
+    return s[:cut] + ell, cut_w + ew
 
 
 def _align_x(align, x, box_w, text_w, panel_w):
@@ -147,13 +219,19 @@ def render_page(page, t=0.0, now='12:00', w=PANEL_W, h=PANEL_H, pressed=None, wi
         if kind == 'fill':
             cv.fill(c)
         elif kind == 'rect':
-            cv.rect(L['x'], L['y'], L['w'], L['h'], c, L.get('fill', False))
+            if L.get('r', 0) > 0 and L.get('fill', False):
+                cv.round_rect(L['x'], L['y'], L['w'], L['h'], L['r'], c)
+            else:
+                cv.rect(L['x'], L['y'], L['w'], L['h'], c, L.get('fill', False))
         elif kind == 'line':
             cv.line(L['x'], L['y'], L['x2'], L['y2'], c)
         elif kind in ('text', 'clock'):
             s = now if kind == 'clock' else str(L.get('s', ''))
             fid = L.get('f', 'f5')
-            tw = text_width(fid, s)
+            if L.get('el') and L.get('w', 0) > 0:
+                s, tw = fit_text(fid, s, L['w'])
+            else:
+                tw = text_width(fid, s)
             x = _align_x(L.get('a', 'l'), L.get('x', 0), L.get('w', 0), tw, w)
             draw_text(cv, x, L.get('y', 0), fid, c, s)
         elif kind == 'scroll':
@@ -175,27 +253,51 @@ def render_page(page, t=0.0, now='12:00', w=PANEL_W, h=PANEL_H, pressed=None, wi
             fid = L.get('f', 'b24')
             bg = parse_color(L.get('bg'), (33, 36, 41))
             fg = c
-            if pressed and pressed == L.get('id'):
+            r = L.get('r', 8)
+            is_pressed = bool(pressed) and pressed == L.get('id')
+            frame = L.get('pr') == 'frame'
+            if is_pressed and not frame:
                 bg, fg = fg, bg
-            cv.round_rect(L.get('x', 0), L.get('y', 0), bw, bh, L.get('r', 8), bg)
+            cv.round_rect(L.get('x', 0), L.get('y', 0), bw, bh, r, bg)
             label = str(L.get('s', ''))
             ya = FONTS.get(fid, {}).get('yAdvance', 0)
             draw_text(cv, L.get('x', 0) + (bw - text_width(fid, label)) // 2,
                       L.get('y', 0) + (bh - ya) // 2, fid, fg, label)
+            if is_pressed and frame:
+                cv.stroke_round_rect(L.get('x', 0), L.get('y', 0), bw, bh, r, 2,
+                                     parse_color(L.get('pc')))
+
+        elif kind == 'zone':
+            if pressed and pressed == L.get('id'):
+                cv.stroke_round_rect(L.get('x', 0), L.get('y', 0), L.get('w', 0),
+                                     L.get('h', 0), L.get('r', 12), 2, parse_color(L.get('pc')))
 
         elif kind == 'bar':
             x, y = L.get('x', 0), L.get('y', 0)
-            bw, bh = L.get('w', w), L.get('h', 3)
-            bg = parse_color(L.get('bg'), (24, 24, 24))
-            cv.rect(x, y, bw, bh, bg, filled=True)
+            bw, bh, r = L.get('w', w), L.get('h', 3), L.get('r', 0)
+            bg = parse_color(L.get('bg'), (33, 32, 33))
+            cv.round_rect(x, y, bw, bh, r, bg)
             p = max(0.0, min(1.0, float(L.get('p', 0))))
             if p > 0:
-                cv.rect(x, y, max(1, round(bw * p)), bh, c, filled=True)
+                filled = max(1, int(bw * p + 0.5))
+                if r > 0:
+                    filled = max(filled, 2 * r)
+                cv.round_rect(x, y, filled, bh, r, c)
 
         elif kind == 'wifi':
-            draw_wifi(cv, L.get('x', 0), L.get('y', 0), wifi, c,
-                      parse_color(L.get('bg'), (74, 73, 74)))
+            off = parse_color(L.get('bg'), (74, 73, 74))
+            if L.get('st') == 'bars':
+                draw_wifi_bars(cv, L.get('x', 0), L.get('y', 0), wifi, c, off)
+            else:
+                draw_wifi(cv, L.get('x', 0), L.get('y', 0), wifi, c, off)
     return cv
+
+
+def draw_wifi_bars(cv, x, y, level, on, off):
+    """Четыре столбика 3 px, высоты 4/8/12/16 — drawWifiBars в прошивке."""
+    for i in range(4):
+        h = 4 * (i + 1)
+        cv.rect(x + 5 * i, y + 16 - h, 3, h, on if i <= level else off, filled=True)
 
 
 def draw_wifi(cv, x, y, level, on, off):
@@ -225,20 +327,21 @@ _RAMP = ((8, '  '), (64, '░░'), (140, '▒▒'), (256, '██'))
 
 
 def hit_test(page, x, y):
-    """Кнопка под точкой касания, или None. Та же логика, что hitTest в прошивке."""
+    """Кнопка или зона под точкой касания, или None. Та же логика, что hitTest в прошивке:
+    последняя по порядку слоёв, у которой есть путь."""
+    hit = None
     for L in page.get('layers', []):
-        if L.get('t') != 'button':
+        if L.get('t') not in ('button', 'zone'):
             continue
         bx, by = L.get('x', 0), L.get('y', 0)
         bw, bh = L.get('w', 0), L.get('h', 0)
         if bx <= x < bx + bw and by <= y < by + bh:
             action = L.get('action') or {}
-            if not action.get('path'):
-                return None
-            return {'id': L.get('id', ''),
-                    'method': action.get('method', 'POST'),
-                    'path': action['path']}
-    return None
+            if action.get('path'):
+                hit = {'id': L.get('id', ''),
+                       'method': action.get('method', 'POST'),
+                       'path': action['path']}
+    return hit
 
 
 def to_ascii(cv):

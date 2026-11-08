@@ -8,8 +8,9 @@ struct RenderCtx {
   const char *clockStr = "";    // локальное время, примитив "clock"
   int16_t w = 64, h = 32;
   bool stale = false;           // данные устарели: рисуем метку в углу
-  const char *pressedId = nullptr;  // кнопка под пальцем — рисуется инверсно
+  const char *pressedId = nullptr;  // кнопка под пальцем — рисуется инверсно (или рамкой)
   int8_t wifi = -1;             // примитив "wifi": дуг 0..3, -1 — нет связи
+  const char *staleSince = "";  // время последних данных «ЧЧ:ММ» — в плашке «Нет связи»
 };
 
 // Рисует одну страницу display list. Неизвестные типы примитивов молча
@@ -34,3 +35,17 @@ bool hitTest(JsonObjectConst page, int16_t x, int16_t y, ButtonHit &out);
 // Экран-заглушка, когда нечего показывать (нет сети и нет кэша).
 void renderStatus(PixelSink &sink, const RenderCtx &ctx, const char *line1,
                   const char *line2);
+
+// Заглушка экрана 480x480 по макету 08.11: шапка (Wi-Fi, часы), значок в круге,
+// заголовок, две строки пояснения и, если задана, кнопка (STATUS_BTN_*).
+struct StatusScreen {
+  const char *icon = "";        // знак в круге: «…», «!»
+  uint16_t iconColor = 0xFFFF;
+  const char *title = "";
+  const char *line1 = "";
+  const char *line2 = "";
+  const char *button = nullptr; // подпись кнопки; nullptr — кнопки нет
+};
+void renderStatusScreen(PixelSink &sink, const RenderCtx &ctx, const StatusScreen &s);
+static const int16_t STATUS_BTN_X = 80, STATUS_BTN_Y = 360, STATUS_BTN_W = 320,
+                     STATUS_BTN_H = 56;

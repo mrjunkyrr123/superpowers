@@ -138,6 +138,100 @@ def check_hit_tests(counter):
     return bad
 
 
+def _c565(hexstr):
+    """'#RRGGBB' -> (int RGB565, кортеж RGB888 как у превью)."""
+    r, g, b = R.parse_color(hexstr)
+    v = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+    return v, (r, g, b)
+
+
+def _canvas565(cv):
+    return [''.join('%04X' % (((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)) for r, g, b in row)
+            for row in cv.px]
+
+
+# Сглаженный шрифт макета 08.11: точный цвет каждой точки на разных фонах.
+AA_CASES = [
+    ('m14', '#000000', '#A5A6A5', 'просрочено 3 дн · важно'),
+    ('m16', '#101010', '#FFFFFF', 'Сеть: RecoRoom-Office'),
+    ('b16', '#EFE3BD', '#101010', 'Лампа включено'),
+    ('b20', '#391010', '#FFFFFF', 'Самара — нет связи'),
+    ('b28', '#000000', '#F7AE10', 'Нет сети…'),
+    ('b48', '#000000', '#FFFFFF', '38 420 ₽'),
+    ('b16', '#F7AE10', '#101010', 'Нет связи · данные от 13:58 ✓ № «»−'),
+]
+
+FIT_CASES = [
+    ('b16', 200, 'Подписать договор с аэропортом Кольцово'),
+    ('b16', 400, 'Коротко'),
+    ('m14', 120, 'Очень длинная задача про переговоры'),
+    ('b13', 100, 'Старый шрифт без многоточия'),
+    ('b20', 10, 'Узко'),
+]
+
+STROKE_CASES = [(224, 56, 12, 2), (64, 64, 32, 2), (40, 20, 12, 2), (6, 6, 2, 3), (100, 40, 0, 1)]
+
+
+def check_aa(counter):
+    bad = 0
+    for font, bg, fg, text in AA_CASES:
+        counter[0] += 1
+        ya = R.FONTS[font]['yAdvance']
+        w = R.text_width(font, text) + 4
+        bgv, bgt = _c565(bg)
+        fgv, fgt = _c565(fg)
+        out = subprocess.run([BIN, 'aa', font, str(w), str(ya), '%04X' % bgv, '%04X' % fgv, text],
+                             check=True, capture_output=True, text=True).stdout.split('\n')[:ya]
+        cv = R.Canvas(w, ya)
+        cv.fill(R.blend565(bgt, bgt, 15))
+        cv.px = [[R._from565(*R._to565(p)) for p in row] for row in cv.px]
+        R.draw_text(cv, 0, 0, font, fgt, text)
+        ref = _canvas565(cv)
+        diff = [i for i in range(ya) if out[i] != ref[i]]
+        if diff:
+            print(f'РАСХОЖДЕНИЕ сглаживания {font} {text!r}: строки {diff[:5]}')
+            bad += 1
+        else:
+            print(f'ok  сглаживание {font} {bg}->{fg} {text[:24]!r}')
+    return bad
+
+
+def check_fit(counter):
+    bad = 0
+    for font, maxw, text in FIT_CASES:
+        counter[0] += 1
+        out = subprocess.run([BIN, 'fit', font, str(maxw), text], check=True,
+                             capture_output=True, encoding='utf-8').stdout.split('\n')
+        fw, fs = int(out[0]), out[1]
+        rs, rw = R.fit_text(font, text, maxw)
+        if (fw, fs) != (rw, rs):
+            print(f'РАСХОЖДЕНИЕ «…» {font} {maxw}: прошивка {fs!r} {fw}, эталон {rs!r} {rw}')
+            bad += 1
+        elif rw > maxw and len(text) > 1 and maxw >= R.text_width(font, '…'):
+            print(f'РАСХОЖДЕНИЕ «…» {font} {maxw}: {rs!r} шире места ({rw})')
+            bad += 1
+        else:
+            print(f'ok  «…» {font} до {maxw}px: {rs!r} ({rw}px)')
+    return bad
+
+
+def check_strokes(counter):
+    bad = 0
+    for w, h, r, t in STROKE_CASES:
+        counter[0] += 1
+        out = subprocess.run([BIN, 'stroke', str(w), str(h), str(r), str(t)], check=True,
+                             capture_output=True, text=True).stdout.split('\n')[:h]
+        cv = R.Canvas(w, h)
+        cv.stroke_round_rect(0, 0, w, h, r, t, (255, 255, 255))
+        ref = [''.join('#' if p != (0, 0, 0) else '.' for p in row) for row in cv.px]
+        if out != ref:
+            print(f'РАСХОЖДЕНИЕ рамка {w}x{h} r={r} t={t}')
+            bad += 1
+        else:
+            print(f'ok  рамка {w}x{h} r={r} t={t}')
+    return bad
+
+
 def main():
     build()
     W, H = 320, 24
@@ -161,6 +255,9 @@ def main():
     total = [len(CASES)]
     bad += check_round_rects(total)
     bad += check_hit_tests(total)
+    bad += check_aa(total)
+    bad += check_fit(total)
+    bad += check_strokes(total)
 
     print()
     if bad:

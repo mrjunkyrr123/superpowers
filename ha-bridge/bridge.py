@@ -25,22 +25,25 @@ PANEL_SHA = bytes.fromhex(os.environ.get('PANEL_TOKEN_SHA256', '00' * 32))
 CONFIG = os.environ.get('CONFIG', os.path.join(os.path.dirname(__file__), 'config.json'))
 PORT = int(os.environ.get('PORT', '8090'))
 
-# Палитра — та же, что у дашборда RECOROOM (уже в RGB565).
-C = {'text': '#FFFFFF', 'text2': '#9C9A9C', 'text3': '#6B696B', 'line': '#292829',
-     'card': '#101010', 'bar': '#4A494A', 'brand': '#EF2C52', 'on': '#08A208',
-     'crit': '#CE3C39'}
+# Палитра макета 08.11.2026 (tokens.json дизайнера) — та же, что у дашборда RECOROOM.
+C = {'text': '#FFFFFF', 'text2': '#A5A6A5', 'text3': '#6B696B', 'line': '#292829',
+     'surface': '#101010', 'surface2': '#212021', 'bg': '#000000', 'brand': '#EF2C52',
+     'on': '#EFE3BD', 'on_ink2': '#6B5D42', 'ink': '#101010', 'crit': '#E7494A'}
 M, W = 16, 480
 TOGGLE = {'switch', 'light', 'fan', 'input_boolean', 'cover'}
 
-# В шрифтах прошивки — ASCII, кириллица и «Ё ё ° —».
+# В шрифтах прошивки — ASCII, кириллица и «Ёё°—₽«»№·…✓−» (tools/genfont.py).
+EXTRA = 'Ёё°—₽«»№·…✓−'
+
+
 def fit(s):
     out = []
     for ch in str(s):
         o = ord(ch)
-        if 0x20 <= o < 0x7F or 0x410 <= o <= 0x44F or ch in 'Ёё°—':
+        if 0x20 <= o < 0x7F or 0x410 <= o <= 0x44F or ch in EXTRA:
             out.append(ch)
-        elif ch in '–−':
-            out.append('-')
+        elif ch == '–':
+            out.append('—')
     return ' '.join(''.join(out).split())
 
 
@@ -58,68 +61,87 @@ def ha(path, body=None):
         return json.loads(r.read() or b'null')
 
 
-def text(x, y, w, s, f, c='text', a=None):
+def text(x, y, w, s, f, c='text', a=None, el=False):
+    """el — не влезло в w: плата обрежет по ширине и поставит «…»."""
     L = {'t': 'text', 'x': x, 'y': y, 'w': w, 'f': f, 'c': C[c], 's': fit(s)}
     if a:
         L['a'] = a
+    if el:
+        L['el'] = True
     return L
 
 
-def rect(x, y, w, h, c):
-    return {'t': 'rect', 'x': x, 'y': y, 'w': w, 'h': h, 'c': C[c], 'fill': True}
+def rect(x, y, w, h, c, r=0):
+    L = {'t': 'rect', 'x': x, 'y': y, 'w': w, 'h': h, 'c': C[c], 'fill': True}
+    if r:
+        L['r'] = r
+    return L
+
+
+ACT = '/api/display/home/act/'
 
 
 def button(bid, x, y, w, h, label, bg, fg, entity, f='b16'):
-    return {'t': 'button', 'id': bid, 'x': x, 'y': y, 'w': w, 'h': h, 'r': 10, 'f': f,
+    return {'t': 'button', 'id': bid, 'x': x, 'y': y, 'w': w, 'h': h, 'r': 12, 'f': f,
             's': fit(label), 'c': C[fg], 'bg': C[bg],
-            'action': {'method': 'POST', 'path': '/api/display/home/act/' + entity}}
+            'action': {'method': 'POST', 'path': ACT + entity}}
 
 
-def num(v):
+def num(v, digits=1):
     try:
         x = float(v)
     except (TypeError, ValueError):
         return None
-    return ('%.1f' % x).replace('.', ',')
+    return ('%.*f' % (digits, x)).replace('.', ',').replace('-', '−')
 
 
 def build(conf, st):
-    """Экран «Дом»: датчики сверху, плитки устройств по две, сцены по три."""
-    e = [rect(M, 18, 4, 16, 'brand'), text(28, 16, 300, conf.get('title', 'ДОМ'), 'b16'),
-         {'t': 'wifi', 'x': 385, 'y': 17, 'c': C['text2'], 'bg': C['bar']},
-         {'t': 'clock', 'x': 344, 'y': 16, 'w': 120, 'f': 'b16', 'c': C['text2'], 'a': 'r'},
-         {'t': 'line', 'x': M, 'y': 44, 'x2': W - M - 1, 'y2': 44, 'c': C['line']}]
-    y = 56
+    """Экран «Дом» по макету 08.11: датчики сверху, плитки устройств по две вплотную,
+    сцены по три. Плитка — слои (фон, имя, состояние) и поверх невидимая зона касания:
+    нажатую плата обводит рамкой 2 px."""
+    e = [rect(M, 16, 4, 18, 'brand'), text(28, 15, 330, conf.get('title', 'ДОМ'), 'b16', el=True),
+         {'t': 'wifi', 'st': 'bars', 'x': 386, 'y': 17, 'c': C['text2'], 'bg': C['line']},
+         {'t': 'clock', 'x': 412, 'y': 15, 'w': 52, 'f': 'b16', 'c': C['text2'], 'a': 'r'},
+         {'t': 'line', 'x': M, 'y': 47, 'x2': W - M - 1, 'y2': 47, 'c': C['line']}]
+    y = 60
     sensors = conf.get('sensors', [])[:2]
+    sw = 448 if len(sensors) == 1 else 220
     for i, s in enumerate(sensors):
-        x = M + i * 232
+        x = M + i * 228
         t = num(st.get(s.get('temperature'), {}).get('state'))
-        h = num(st.get(s.get('humidity'), {}).get('state'))
-        e += [rect(x, y, 216, 64, 'card'), text(x + 12, y + 8, 192, s.get('name', ''), 'r12', 'text2'),
-              text(x + 12, y + 26, 120, (t + '°') if t else '—', 'b24'),
-              text(x + 112, y + 32, 92, (h + ' %') if h else '', 'b16', 'text2', 'r')]
+        h = num(st.get(s.get('humidity'), {}).get('state'), 0)
+        e += [rect(x, y, sw, 72, 'surface', 12),
+              text(x + 14, y + 10, sw - 28, s.get('name', ''), 'm14', 'text2', el=True),
+              text(x + 14, y + 30, 120, (t + '°') if t else '—', 'b28'),
+              text(x + sw - 104, y + 38, 90, (h + ' %') if h else '', 'm16', 'text2', 'r')]
     if sensors:
-        y += 76
+        y += 84
     for i, d in enumerate(conf.get('devices', [])[:6]):
-        x, yy = M + (i % 2) * 232, y + (i // 2) * 76
+        x, yy = M + (i % 2) * 224, y + (i // 2) * 64
         s = st.get(d['entity'], {})
         state = s.get('state', 'unavailable')
         name = d.get('name') or s.get('attributes', {}).get('friendly_name', d['entity'])
         if state in ('unavailable', 'unknown') or not s:
-            e += [rect(x, yy, 216, 64, 'card'), text(x + 12, yy + 12, 192, name, 'b16', 'text3'),
-                  text(x + 12, yy + 36, 192, 'нет связи', 'r12', 'crit')]
+            e += [rect(x, yy, 224, 56, 'line', 12), rect(x + 2, yy + 2, 220, 52, 'bg', 10),
+                  text(x + 14, yy + 10, 196, name, 'b16', 'text3', el=True),
+                  text(x + 14, yy + 30, 196, 'нет связи', 'm14', 'crit')]
             continue
         on = state in ('on', 'open', 'opening')
-        e += [button('d%d' % i, x, yy, 216, 64, name, 'on' if on else 'card', 'text', d['entity']),
-              text(x + 12, yy + 44, 192, 'вкл' if on else 'выкл', 'r12', 'text' if on else 'text3')]
+        e += [rect(x, yy, 224, 56, 'on' if on else 'surface2', 12),
+              text(x + 14, yy + 10, 196, name, 'b16', 'ink' if on else 'text', el=True),
+              text(x + 14, yy + 30, 196, 'включено' if on else 'выключено', 'm14',
+                   'on_ink2' if on else 'text3'),
+              {'t': 'zone', 'id': 'd%d' % i, 'x': x, 'y': yy, 'w': 224, 'h': 56, 'r': 12,
+               'pr': 'frame', 'pc': C['on_ink2'] if on else C['text'],
+               'action': {'method': 'POST', 'path': ACT + d['entity']}}]
     rows = (min(len(conf.get('devices', [])), 6) + 1) // 2
-    y += rows * 76
+    y += rows * 64 + 4
     for i, sc in enumerate(conf.get('scenes', [])[:6]):
-        x, yy = M + (i % 3) * 152, y + (i // 3) * 48
-        if yy + 40 > 452:
+        x, yy = M + (i % 3) * 152, y + (i // 3) * 56
+        if yy + 48 > 452:
             break
-        e.append(button('s%d' % i, x, yy, 144, 40, sc.get('name', sc['entity']), 'line', 'text',
-                        sc['entity'], 'b13'))
+        e.append(button('s%d' % i, x, yy, 144, 48, sc.get('name', sc['entity']), 'surface', 'text',
+                        sc['entity']))
     return {'v': 1, 'w': W, 'h': W, 'pages': [{'id': 'home', 'layers': e}]}
 
 

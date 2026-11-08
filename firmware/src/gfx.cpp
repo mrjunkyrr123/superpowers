@@ -1,5 +1,7 @@
 #include "gfx.h"
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 uint32_t utf8Next(const char *&p) {
   const uint8_t c = static_cast<uint8_t>(*p);
@@ -48,6 +50,26 @@ int textWidth(const GfxFont &f, const char *s) {
   return w;
 }
 
+uint16_t blend565(uint16_t bg, uint16_t fg, uint8_t a) {
+  if (a >= 15) return fg;
+  if (a == 0) return bg;
+  const uint16_t na = 15 - a;
+  const uint16_t r = ((fg >> 11) * a + (bg >> 11) * na) / 15;
+  const uint16_t g = (((fg >> 5) & 0x3F) * a + ((bg >> 5) & 0x3F) * na) / 15;
+  const uint16_t b = ((fg & 0x1F) * a + (bg & 0x1F) * na) / 15;
+  return static_cast<uint16_t>((r << 11) | (g << 5) | b);
+}
+
+// Яркость точки глифа: 0..15. Растр — строки подряд без выравнивания:
+// 1 бит — MSB-first, 4 бита — старший полубайт первым.
+static inline uint8_t glyphAlpha(const GfxFont &f, const GfxGlyph *g, uint32_t i) {
+  if (f.bpp == 4) {
+    const uint8_t b = f.bitmap[g->off + i / 2];
+    return (i & 1) ? (b & 0x0F) : (b >> 4);
+  }
+  return (f.bitmap[g->off + i / 8] & (0x80 >> (i % 8))) ? 15 : 0;
+}
+
 void drawText(PixelSink &sink, int16_t x, int16_t yTop, const GfxFont &f,
               uint16_t color, const char *s, int16_t clipX0, int16_t clipX1) {
   if (!s) return;
@@ -57,27 +79,63 @@ void drawText(PixelSink &sink, int16_t x, int16_t yTop, const GfxFont &f,
     const uint32_t cp = utf8Next(s);
     const GfxGlyph *g = glyphOrFallback(f, cp);
     if (!g) continue;
-    // Растр упакован MSB-first, строки идут подряд без выравнивания.
-    // Подряд идущие точки строки отдаются одним отрезком.
+    // Подряд идущие полные точки строки отдаются одним отрезком; полупрозрачные
+    // края сглаженного шрифта смешиваются с тем, что уже нарисовано под ними.
     for (uint8_t ry = 0; ry < g->h; ++ry) {
+      const int16_t py = base + g->dy + ry;
       int16_t runStart = -1;
       for (int16_t rx = 0; rx <= g->w; ++rx) {
-        bool on = false;
-        if (rx < g->w) {
-          const uint32_t bit = static_cast<uint32_t>(ry) * g->w + rx;
-          const int16_t px = cur + g->dx + rx;
-          on = (f.bitmap[g->off + bit / 8] & (0x80 >> (bit % 8))) &&
-               px >= clipX0 && px < clipX1;
+        uint8_t a = 0;
+        const int16_t px = cur + g->dx + rx;
+        if (rx < g->w && px >= clipX0 && px < clipX1)
+          a = glyphAlpha(f, g, static_cast<uint32_t>(ry) * g->w + rx);
+        if (a == 15) {
+          if (runStart < 0) runStart = rx;
+          continue;
         }
-        if (on && runStart < 0) runStart = rx;
-        if (!on && runStart >= 0) {
-          sink.hline(cur + g->dx + runStart, base + g->dy + ry, rx - runStart, color);
+        if (runStart >= 0) {
+          sink.hline(cur + g->dx + runStart, py, rx - runStart, color);
           runStart = -1;
         }
+        if (a) sink.px(px, py, blend565(sink.get(px, py), color, a));
       }
     }
     cur += g->adv;
   }
+}
+
+int fitText(const GfxFont &f, const char *s, int maxW, char *out, size_t outSize) {
+  if (!outSize) return 0;
+  out[0] = '\0';
+  if (!s) return 0;
+  const int full = textWidth(f, s);
+  if (full <= maxW) {
+    snprintf(out, outSize, "%s", s);   // strlcpy нет в хостовой сборке (MinGW)
+    return full;
+  }
+  // В старых шрифтах (DejaVu) знака «…» нет — там три точки.
+  const char *ell = findGlyph(f, 0x2026) ? "\xE2\x80\xA6" : "...";
+  const int ew = textWidth(f, ell);
+  int w = 0;
+  const char *p = s, *cut = s;
+  int cutW = 0;
+  while (*p) {
+    const char *q = p;
+    const uint32_t cp = utf8Next(q);
+    const GfxGlyph *g = glyphOrFallback(f, cp);
+    const int adv = g ? g->adv : 0;
+    if (w + adv + ew > maxW) break;
+    w += adv;
+    p = q;
+    if (cp != ' ') { cut = p; cutW = w; }   // пробел перед «…» не оставляем
+  }
+  size_t n = static_cast<size_t>(cut - s);
+  const size_t el = strlen(ell);
+  if (n + el + 1 > outSize) n = outSize > el + 1 ? outSize - el - 1 : 0;
+  memcpy(out, s, n);
+  memcpy(out + n, ell, el);
+  out[n + el] = '\0';
+  return cutW + ew;
 }
 
 void drawRect(PixelSink &sink, int16_t x, int16_t y, int16_t w, int16_t h,
@@ -121,6 +179,32 @@ void fillRoundRect(PixelSink &sink, int16_t x, int16_t y, int16_t w, int16_t h,
   for (int16_t row = 0; row < h; ++row) {
     const int16_t inset = roundRectInset(row, h, r);
     sink.hline(x + inset, y + row, w - 2 * inset, color);
+  }
+}
+
+void strokeRoundRect(PixelSink &sink, int16_t x, int16_t y, int16_t w, int16_t h,
+                     int16_t r, int16_t t, uint16_t color) {
+  if (w <= 0 || h <= 0 || t <= 0) return;
+  if (2 * t >= w || 2 * t >= h) {        // рамка толще половины — это заливка
+    fillRoundRect(sink, x, y, w, h, r, color);
+    return;
+  }
+  const int16_t maxR = (w < h ? w : h) / 2;
+  if (r > maxR) r = maxR;
+  const int16_t iw = w - 2 * t, ih = h - 2 * t;
+  const int16_t imaxR = (iw < ih ? iw : ih) / 2;
+  int16_t ri = r - t;
+  if (ri < 0) ri = 0;
+  if (ri > imaxR) ri = imaxR;
+  for (int16_t row = 0; row < h; ++row) {
+    const int16_t oi = roundRectInset(row, h, r);
+    if (row < t || row >= h - t) {
+      sink.hline(x + oi, y + row, w - 2 * oi, color);
+      continue;
+    }
+    const int16_t ii = t + roundRectInset(row - t, ih, ri);
+    sink.hline(x + oi, y + row, ii - oi, color);
+    sink.hline(x + w - ii, y + row, ii - oi, color);
   }
 }
 

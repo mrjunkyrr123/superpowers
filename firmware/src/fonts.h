@@ -3,7 +3,7 @@
 #include <stdint.h>
 
 struct GfxGlyph {
-  uint16_t off;      // смещение в bitmap
+  uint32_t off;      // смещение в bitmap (4 бита на 48 px — больше 64 КБ)
   uint8_t  w, h;     // размер в пикселях
   int8_t   dx, dy;   // сдвиг от курсора / базовой линии
   uint8_t  adv;      // шаг курсора
@@ -16,16 +16,21 @@ struct GfxFont {
   uint16_t        count;
   uint8_t         yAdvance;  // шаг между строками
   uint8_t         baseline;  // от верха строки до базовой линии
+  uint8_t         bpp;       // 1 — точка есть/нет, 4 — 16 градаций (сглаживание)
 };
 
 extern const GfxFont FONT_F5;
 extern const GfxFont FONT_R12;
 extern const GfxFont FONT_B13;
-extern const GfxFont FONT_B16;
 extern const GfxFont FONT_R20;
 extern const GfxFont FONT_R28;
 extern const GfxFont FONT_B24;
 extern const GfxFont FONT_B32;
+extern const GfxFont FONT_M14;
+extern const GfxFont FONT_M16;
+extern const GfxFont FONT_B16;
+extern const GfxFont FONT_B20;
+extern const GfxFont FONT_B28;
 extern const GfxFont FONT_B48;
 
 // Поиск шрифта по идентификатору из JSON ("f5", "b16", ...).

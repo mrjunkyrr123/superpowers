@@ -47,6 +47,10 @@ struct FrameSink : PixelSink {
     uint16_t *p = frame + y * SCREEN_W + x;
     for (int16_t i = x; i < x1; ++i) *p++ = color;
   }
+  uint16_t get(int16_t x, int16_t y) override {
+    if (x < 0 || y < 0 || x >= SCREEN_W || y >= SCREEN_H) return 0;
+    return frame[y * SCREEN_W + x];
+  }
 };
 static FrameSink sink;
 
@@ -66,6 +70,7 @@ static volatile uint32_t pollMs   = DEFAULT_POLL * 1000;
 
 static int  brightness = 70, litBrightness = -1;
 static char clockBuf[8] = "--:--";
+static char dataTime[8] = "";   // когда пришли последние данные — в плашке «Нет связи»
 static bool staleShown  = false;
 static int8_t wifiShown = -1;   // дуг на значке Wi-Fi, -1 — нет связи
 // Радио почти всегда выключено, поэтому значок показывает сигнал последнего сеанса.
@@ -89,6 +94,7 @@ static uint8_t bandCount = 0;
 static char pressedId[32]     = "";
 static char pressedMethod[8]  = "";
 static char pressedPath[128]  = "";
+static bool statusHasButton   = false;   // на экране заглушка с кнопкой «Повторить»
 
 // Нажатие ушло, ответа ещё нет. Радио включается и запрос идёт секунды: кнопка горит
 // сразу, чтобы было видно, что касание принято, а новые нажатия не принимаются — иначе
@@ -420,7 +426,24 @@ static int16_t startX, startY, lastX, lastY;
 static void handleTouch() {
   int16_t x, y;
   const Touch t = touchRead(x, y);
-  if (!haveData) return;
+  if (!haveData) {
+    // Заглушка «Нет сети»: одна кнопка — переспросить сеть, не дожидаясь срока.
+    const bool on = statusHasButton && x >= STATUS_BTN_X && y >= STATUS_BTN_Y &&
+                    x < STATUS_BTN_X + STATUS_BTN_W && y < STATUS_BTN_Y + STATUS_BTN_H;
+    if (t == Touch::Down) {
+      const char *id = on ? "status-btn" : "";
+      if (strcmp(id, pressedId)) {
+        strlcpy(pressedId, id, sizeof(pressedId));
+        dirty = true;
+      }
+    } else if (t == Touch::Up && pressedId[0]) {
+      pressedId[0] = '\0';
+      pollNow = true;
+      dirty = true;
+      Serial.println(F("заглушка: повторить сейчас"));
+    }
+    return;
+  }
   if (t == Touch::Down) {
     if (!fingerDown) {
       fingerDown = true;
@@ -478,6 +501,7 @@ static RenderCtx makeCtx() {
   ctx.pressedId = pressedId[0] ? pressedId : waitId[0] ? waitId : nullptr;
   ctx.stale = staleShown;
   ctx.wifi = wifiShown;
+  ctx.staleSince = dataTime;
   return ctx;
 }
 
@@ -491,15 +515,51 @@ static void report(bool bandsOnly, uint32_t renderMs, uint32_t presentMs) {
                 (unsigned)renderMs, (unsigned)presentMs);
 }
 
-// Номер экрана полосками внизу, как в макете (16x4, шаг 24, текущая белая). Рисует
-// плата: экраны из двух источников, сервер про экран дома не знает.
+// Номер экрана чёрточками внизу, как в макете 08.11 (16x4, радиус 2, шаг 24, текущая
+// белая). Рисует плата: экраны из двух источников, сервер про экран дома не знает.
 static void drawDots() {
   const int n = pageCount();
   if (n < 2) return;
   const int dw = 16, gap = 8, x0 = (SCREEN_W - (n * dw + (n - 1) * gap)) / 2;
-  const uint16_t off = parseColor("#4A494A", 0x4A49);
+  const uint16_t off = parseColor("#393839", 0x39C7);
   for (int i = 0; i < n; ++i)
-    drawRect(sink, x0 + i * (dw + gap), 460, dw, 4, i == static_cast<int>(pageIdx) ? 0xFFFF : off, true);
+    fillRoundRect(sink, x0 + i * (dw + gap), 460, dw, 4, 2,
+                  i == static_cast<int>(pageIdx) ? 0xFFFF : off);
+}
+
+// Заглушки, пока данных нет вовсе (макет 08.11). «Нет сети» — с кнопкой «Повторить».
+static char statusLine1[64];
+static char statusLine2[48];
+
+static StatusScreen connectingScreen() {
+  StatusScreen s;
+  s.icon = "\xE2\x80\xA6";
+  s.iconColor = parseColor("#A5A6A5", 0xA534);
+  s.title = "Подключение\xE2\x80\xA6";
+  snprintf(statusLine1, sizeof(statusLine1), "Сеть: %s", cfg.ssid.c_str());
+  s.line1 = statusLine1;
+  s.line2 = "Обычно до 20 секунд";
+  return s;
+}
+
+static StatusScreen offlineScreen(bool online) {
+  StatusScreen s;
+  s.icon = "!";
+  s.iconColor = parseColor("#F7AE10", 0xF562);
+  if (online) {
+    s.title = "Нет данных";
+    s.line1 = "Сервер не ответил";
+    s.line2 = "Покажу, как только придут";
+  } else {
+    s.title = "Нет сети";
+    snprintf(statusLine1, sizeof(statusLine1), "Wi-Fi %s не найден", cfg.ssid.c_str());
+    snprintf(statusLine2, sizeof(statusLine2), "Пробую снова каждые %u секунд",
+             (unsigned)(pollMs / 1000));
+    s.line1 = statusLine1;
+    s.line2 = statusLine2;
+    s.button = "Повторить сейчас";
+  }
+  return s;
 }
 
 // Собирает кадр в теневом буфере; на экран он ещё не идёт.
@@ -508,12 +568,16 @@ static void renderFrame() {
   sink.y1 = SCREEN_H;
   const RenderCtx ctx = makeCtx();
   if (haveData) {
+    statusHasButton = false;
     renderPage(sink, currentPage(), ctx);
     drawDots();
   } else {
+    // Первые секунды после старта сеть просто ещё поднимается — это не «нет сети».
     const bool online = netOnline();
-    renderStatus(sink, ctx, online ? "НЕТ ДАННЫХ" : "НЕТ СЕТИ",
-                 online ? cfg.url.c_str() : cfg.ssid.c_str());
+    const StatusScreen s = !online && millis() - bootMs < 25000 ? connectingScreen()
+                                                                : offlineScreen(online);
+    statusHasButton = s.button != nullptr;
+    renderStatusScreen(sink, ctx, s);
   }
 }
 
@@ -565,13 +629,11 @@ static void drawBands() {
   report(true, renderMs, millis() - t0 - renderMs);
 }
 
-static void showStatus(const char *line1, const char *line2) {
-  RenderCtx ctx;
-  ctx.w = SCREEN_W;
-  ctx.h = SCREEN_H;
+static void showStatus(const StatusScreen &s) {
+  const RenderCtx ctx = makeCtx();
   sink.y0 = 0;
   sink.y1 = SCREEN_H;
-  renderStatus(sink, ctx, line1, line2);
+  renderStatusScreen(sink, ctx, s);
   present(frame);
   if (litBrightness < 0) {
     backlight(brightness);
@@ -615,7 +677,7 @@ void setup() {
       etag = cachedEtag;
       Serial.printf("восстановлен кэш: %u байт\n", (unsigned)cached.length());
     }
-    if (!haveData) showStatus("ПОДКЛЮЧЕНИЕ", cfg.ssid.c_str());
+    if (!haveData) showStatus(connectingScreen());
     else draw();
 
     actionQ = xQueueCreate(4, sizeof(Action));
@@ -659,6 +721,12 @@ void loop() {
   if (strcmp(t, clockBuf)) {
     strlcpy(clockBuf, t, sizeof(clockBuf));
     dirty = true;
+  }
+  // Время последних данных — для плашки «Нет связи · данные от ЧЧ:ММ».
+  static uint32_t okSeen = 0;
+  if (lastOkMs != okSeen) {
+    okSeen = lastOkMs;
+    strlcpy(dataTime, clockBuf[0] == '-' ? "" : clockBuf, sizeof(dataTime));
   }
   const bool stale = isStale();
   if (stale != staleShown) {
