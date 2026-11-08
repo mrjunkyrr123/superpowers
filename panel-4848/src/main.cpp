@@ -98,9 +98,23 @@ static const uint32_t WAIT_REPLY_MS = 8000;
 static char     waitId[32] = "";
 static uint32_t waitUntil  = 0;
 
-static JsonObjectConst currentPage() {
-  return doc["pages"][pageIdx].as<JsonObjectConst>();
+// Экран «Дом» — второй источник: мостик Home Assistant в домашней сети (ha-bridge).
+// Его адрес и ключ приходят в раскладке сервера ("home"), в прошивке их нет: переехала
+// коробка — меняется строка на сервере, не прошивка. Экраны дома идут после серверных.
+static JsonDocument homeDoc;
+static bool         haveHome = false;
+
+static size_t mainCount() { return haveData ? doc["pages"].size() : 0; }
+static size_t homeCount() { return haveHome ? homeDoc["pages"].size() : 0; }
+static size_t pageCount() { return mainCount() + homeCount(); }
+static bool   isHomePage(size_t i) { return i >= mainCount(); }
+
+static JsonObjectConst pageAt(size_t i) {
+  if (i < mainCount()) return doc["pages"][i].as<JsonObjectConst>();
+  return homeDoc["pages"][i - mainCount()].as<JsonObjectConst>();
 }
+
+static JsonObjectConst currentPage() { return pageAt(pageIdx); }
 
 static void refreshBands() {
   bandCount = 0;
@@ -125,17 +139,14 @@ static void onPageChanged() {
 static bool fadeNext = false;   // следующий кадр — через затухание подсветки
 
 static void turnPage(int delta) {
-  const int n = doc["pages"].size();
+  const int n = pageCount();
   if (!n) return;
   pageIdx = (pageIdx + delta + n) % n;
   onPageChanged();
   fadeNext = n > 1;
 }
 
-// Разбирает display list. false — JSON битый или пустой: тогда на экране
-// остаётся то, что было, а не пустота.
-static bool applyBody(const char *json) {
-  JsonDocument fresh;
+static bool parsePages(JsonDocument &fresh, const char *json) {
   const DeserializationError err = deserializeJson(fresh, json);
   if (err) {
     Serial.printf("JSON: %s\n", err.c_str());
@@ -145,34 +156,96 @@ static bool applyBody(const char *json) {
     Serial.println(F("JSON: нет непустого массива pages"));
     return false;
   }
+  return true;
+}
 
-  const size_t oldPages = haveData ? doc["pages"].size() : 0;
-  // Экраны листают руками: появился или пропал «Внимание» — остаёмся на том же экране.
-  char oldId[24] = "";
-  if (haveData) strlcpy(oldId, currentPage()["id"] | "", sizeof(oldId));
-  doc = std::move(fresh);
-  haveData = true;
-  // Кнопки могли сдвинуться: нажатие под пальцем отменяем, ждать ответа больше нечего.
-  pressedId[0] = '\0';
-  waitId[0] = '\0';
-
-  // Те же экраны с новыми цифрами — остаёмся, где были, бегущую строку не сбрасываем.
-  // Другое число экранов — ищем тот же экран по id, нет его — первый.
-  if (doc["pages"].size() == oldPages) {
-    refreshBands();
-    dirty = true;
-  } else {
+// Экраны листают руками: пришли новые данные (любого источника), появился или пропал
+// экран — остаёмся на том же по id; нет его — первый. Кнопки могли сдвинуться: нажатие
+// под пальцем отменяем, ждать ответа больше нечего.
+struct KeepPage {
+  char id[24] = "";
+  size_t count = 0;
+  KeepPage() {
+    count = pageCount();
+    if (count) strlcpy(id, currentPage()["id"] | "", sizeof(id));
+  }
+  void restore() {
+    pressedId[0] = '\0';
+    waitId[0] = '\0';
+    if (pageCount() == count && pageIdx < count) {
+      refreshBands();
+      dirty = true;
+      return;
+    }
     pageIdx = 0;
-    const size_t n = doc["pages"].size();
-    for (size_t i = 0; i < n && oldId[0]; ++i)
-      if (!strcmp(doc["pages"][i]["id"] | "", oldId)) pageIdx = i;
+    for (size_t i = 0; i < pageCount() && id[0]; ++i)
+      if (!strcmp(pageAt(i)["id"] | "", id)) pageIdx = i;
     onPageChanged();
   }
+};
+
+// Адрес мостика дома: только локальная сеть — ключ дома не должен уйти наружу,
+// даже если с сервера придёт что-то неожиданное.
+static bool lanUrl(const char *u) {
+  if (strncmp(u, "http://", 7)) return false;
+  const char *h = u + 7;
+  if (!strncmp(h, "192.168.", 8) || !strncmp(h, "10.", 3)) return true;
+  if (!strncmp(h, "172.", 4)) {
+    const int b = atoi(h + 4);
+    return b >= 16 && b <= 31;
+  }
+  const char *end = strpbrk(h, ":/");
+  const size_t n = end ? static_cast<size_t>(end - h) : strlen(h);
+  return n > 6 && !strncmp(h + n - 6, ".local", 6);
+}
+
+// Источник дома для сетевой задачи — копия под bodyMux (пишет loop, читает задача).
+static String   homeUrlShared, homeTokenShared;
+static volatile uint32_t homeVersion = 0;
+static SemaphoreHandle_t bodyMux = nullptr;
+
+// Разбирает display list. false — JSON битый или пустой: тогда на экране
+// остаётся то, что было, а не пустота.
+static bool applyBody(const char *json) {
+  JsonDocument fresh;
+  if (!parsePages(fresh, json)) return false;
+  KeepPage keep;
+  doc = std::move(fresh);
+  haveData = true;
+
+  const char *hu = doc["home"]["url"] | "";
+  const char *ht = doc["home"]["token"] | "";
+  const bool homeOk = *hu && *ht && lanUrl(hu);
+  if (*hu && !lanUrl(hu)) Serial.printf("дом: адрес не из локальной сети, не беру: %s\n", hu);
+  if (bodyMux) {
+    xSemaphoreTake(bodyMux, portMAX_DELAY);
+    if (homeUrlShared != (homeOk ? hu : "") || homeTokenShared != (homeOk ? ht : "")) {
+      homeUrlShared = homeOk ? hu : "";
+      homeTokenShared = homeOk ? ht : "";
+      homeVersion++;
+    }
+    xSemaphoreGive(bodyMux);
+  }
+  if (!homeOk) {                 // дом убрали с сервера — убираем и экран
+    haveHome = false;
+    homeDoc.clear();
+  }
+  keep.restore();
 
   const uint32_t poll = doc["poll_interval"] | DEFAULT_POLL;
   pollMs = constrain(poll, 5UL, 3600UL) * 1000;
   brightness = constrain(doc["brightness"] | 70, 5, 100);
   wifiAlways = doc["wifi_always"] | false;
+  return true;
+}
+
+static bool applyHome(const char *json) {
+  JsonDocument fresh;
+  if (!parsePages(fresh, json)) return false;
+  KeepPage keep;
+  homeDoc = std::move(fresh);
+  haveHome = true;
+  keep.restore();
   return true;
 }
 
@@ -183,11 +256,24 @@ struct Action {
   char method[8];
   char path[128];
   char id[32];
+  bool home;                     // кнопка экрана «Дом» — в мостик, не на сервер
 };
 static QueueHandle_t     actionQ = nullptr;
-static SemaphoreHandle_t bodyMux = nullptr;
 static String            freshBody;        // новый ответ сервера, только под bodyMux
+static String            freshHome;        // новый экран дома, только под bodyMux
 static volatile bool     pollNow = false;  // переспросить, не дожидаясь срока
+static volatile bool     homeNow = false;  // переспросить мостик
+static const uint32_t    HOME_POLL_MS = 10000;  // свет могли включить и с телефона
+
+// Мостик дома: локальная сеть, ответ за доли секунды — спрашиваем часто.
+static void pollHome(Config &hc, String &homeEtag) {
+  if (!hc.url.length()) return;
+  String body;
+  if (fetchDisplayList(hc, body, homeEtag) != Fetch::Updated) return;
+  xSemaphoreTake(bodyMux, portMAX_DELAY);
+  freshHome = body;
+  xSemaphoreGive(bodyMux);
+}
 
 static void pollOnce() {
   String body;
@@ -220,8 +306,11 @@ static void pollOnce() {
 static void netTask(void *) {
   bool awake = netBegin(cfg);    // до 20 с — экран в это время живёт
   uint32_t holdUntil = millis() + BOOT_ONLINE_MS;
-  uint32_t lastPoll = 0, lastBeat = millis();
+  uint32_t lastPoll = 0, lastBeat = millis(), lastHome = 0, homeSeen = 0;
   bool first = true;
+  Config homeCfg;                // адрес и ключ мостика — из раскладки сервера
+  homeCfg.screenId = "home";
+  String homeEtag;
   for (;;) {
     const uint32_t now = millis();
     const bool pollDue = first || pollNow || now - lastPoll >= pollMs;
@@ -239,14 +328,31 @@ static void netTask(void *) {
     if (awake) {
       netLoop();
       wifiNow = netOnline() ? wifiLevel() : -1;
+      if (homeVersion != homeSeen) {           // сервер прислал другой адрес мостика
+        xSemaphoreTake(bodyMux, portMAX_DELAY);
+        homeCfg.url = homeUrlShared;
+        homeCfg.token = homeTokenShared;
+        homeSeen = homeVersion;
+        xSemaphoreGive(bodyMux);
+        homeEtag = "";
+        homeNow = true;
+      }
       Action a;
       if (xQueueReceive(actionQ, &a, 0) == pdTRUE) {
-        const int code = sendAction(cfg, a.method, a.path, a.id);
-        Serial.printf("  ответ сервера на %s: %d\n", a.id, code);
+        const int code = sendAction(a.home ? homeCfg : cfg, a.method, a.path, a.id);
+        Serial.printf("  ответ %s на %s: %d\n", a.home ? "дома" : "сервера", a.id, code);
         holdUntil = millis() + ACTION_HOLD_MS;
-        // Любой ответ сервера — повод переспросить: экран мог поменяться, а на 404
+        // Любой ответ — повод переспросить: экран мог поменяться, а на 404
         // (задачи уже нет) панель иначе показывала бы старое до следующего опроса.
-        if (code > 0) pollNow = true;
+        if (code > 0) {
+          if (a.home) homeNow = true;
+          else pollNow = true;
+        }
+      }
+      if (homeNow || millis() - lastHome >= HOME_POLL_MS) {
+        homeNow = false;
+        lastHome = millis();
+        pollHome(homeCfg, homeEtag);
       }
       if (first || pollNow || millis() - lastPoll >= pollMs) {
         first = false;
@@ -273,14 +379,19 @@ static void netTask(void *) {
 // Забирает ответ, который принесла сетевая задача.
 static void takeFreshBody() {
   if (!bodyMux) return;
-  String body;
+  String body, home;
   xSemaphoreTake(bodyMux, portMAX_DELAY);
   body = freshBody;
   freshBody = String();
+  home = freshHome;
+  freshHome = String();
   xSemaphoreGive(bodyMux);
   if (body.length() && applyBody(body.c_str()))
     Serial.printf("данные обновлены: %u байт, %u экр.\n", (unsigned)body.length(),
-                  (unsigned)doc["pages"].size());
+                  (unsigned)pageCount());
+  // Пока дом не включён с сервера (адреса нет) — его ответ не берём.
+  if (home.length() && homeUrlShared.length() && applyHome(home.c_str()))
+    Serial.printf("дом обновлён: %u байт\n", (unsigned)home.length());
 }
 
 
@@ -296,6 +407,7 @@ static void pressButton(const char *id) {
   strlcpy(a.method, pressedMethod, sizeof(a.method));
   strlcpy(a.path, pressedPath, sizeof(a.path));
   strlcpy(a.id, id, sizeof(a.id));
+  a.home = isHomePage(pageIdx);
   if (xQueueSend(actionQ, &a, 0) != pdTRUE) Serial.println(F("  очередь нажатий полна"));
 }
 
@@ -379,6 +491,17 @@ static void report(bool bandsOnly, uint32_t renderMs, uint32_t presentMs) {
                 (unsigned)renderMs, (unsigned)presentMs);
 }
 
+// Номер экрана полосками внизу, как в макете (16x4, шаг 24, текущая белая). Рисует
+// плата: экраны из двух источников, сервер про экран дома не знает.
+static void drawDots() {
+  const int n = pageCount();
+  if (n < 2) return;
+  const int dw = 16, gap = 8, x0 = (SCREEN_W - (n * dw + (n - 1) * gap)) / 2;
+  const uint16_t off = parseColor("#4A494A", 0x4A49);
+  for (int i = 0; i < n; ++i)
+    drawRect(sink, x0 + i * (dw + gap), 460, dw, 4, i == static_cast<int>(pageIdx) ? 0xFFFF : off, true);
+}
+
 // Собирает кадр в теневом буфере; на экран он ещё не идёт.
 static void renderFrame() {
   sink.y0 = 0;
@@ -386,6 +509,7 @@ static void renderFrame() {
   const RenderCtx ctx = makeCtx();
   if (haveData) {
     renderPage(sink, currentPage(), ctx);
+    drawDots();
   } else {
     const bool online = netOnline();
     renderStatus(sink, ctx, online ? "НЕТ ДАННЫХ" : "НЕТ СЕТИ",
