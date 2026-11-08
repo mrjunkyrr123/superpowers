@@ -671,6 +671,11 @@ void setup() {
       while (true) delay(1000);
     }
   } else {
+    // До кэша: applyBody передаёт адрес мостика дома сетевой задаче под bodyMux. Без него
+    // адрес из кэша терялся, а сервер на тот же ETag отвечает 304 — экран «Дом» не
+    // появлялся до первой смены данных (08.11.2026, после перепрошивки).
+    actionQ = xQueueCreate(4, sizeof(Action));
+    bodyMux = xSemaphoreCreateMutex();
     // Кэш — до сети: если Wi-Fi не поднимется, покажем последние данные.
     String cached, cachedEtag;
     if (cacheLoad(cached, cachedEtag) && applyBody(cached.c_str())) {
@@ -680,8 +685,6 @@ void setup() {
     if (!haveData) showStatus(connectingScreen());
     else draw();
 
-    actionQ = xQueueCreate(4, sizeof(Action));
-    bodyMux = xSemaphoreCreateMutex();
     // Ядро 0 — там же стек Wi-Fi; loop и прерывание экрана остаются на ядре 1.
     // 16 КБ стека: TLS-рукопожатие на меньшем падает.
     xTaskCreatePinnedToCore(netTask, "net", 16384, nullptr, 1, nullptr, 0);

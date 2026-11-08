@@ -1,4 +1,5 @@
-﻿# Сборка panel-4848-idf. Запуск: powershell -File build.ps1 [ota]   (ota — ещё и прошить по воздуху)
+﻿# Сборка panel-4848-idf. Запуск: . $PROFILE; .\build.ps1 [ota | usb [COM10]]
+#   ota — ещё и прошить по воздуху, usb — кабелем (460800).
 #
 # ESP-IDF не принимает пробелы в пути, а PlatformIO раскрывает ссылки до настоящего пути,
 # поэтому исходники зеркалятся в C:\pio21\w. Общие файлы из firmware/src кладутся рядом с
@@ -14,7 +15,13 @@ if (-not (Test-Path "$venv\Scripts\python.exe")) {
   python -m venv $venv
   & "$venv\Scripts\python.exe" -m pip install -q 'pioarduino==6.2.0'
 }
-if ($args[0] -eq 'ota') { $envName = 'guition4848_idf_ota'; $target = '-t upload' } else { $envName = 'guition4848_idf'; $target = '' }
+# Пароль OTA вшивается при сборке (platformio.ini: ${sysenv.PANEL_4848_OTA_PASS}). Без него
+# прошивка выходит без OTA, и обратно — только кабелем (08.11.2026 так и вышло: собирал из
+# оболочки без профиля). Секрет — из Bitwarden через $PROFILE.
+if (-not $env:PANEL_4848_OTA_PASS) { 'нет PANEL_4848_OTA_PASS — запусти из PowerShell с профилем (. $PROFILE)'; exit 2 }
+if ($args[0] -eq 'ota') { $envName = 'guition4848_idf_ota'; $target = '-t upload' }
+elseif ($args[0] -eq 'usb') { $envName = 'guition4848_idf'; $target = '-t upload --upload-port ' + $(if ($args[1]) { $args[1] } else { 'COM10' }) }
+else { $envName = 'guition4848_idf'; $target = '' }
 
 robocopy "$repo\panel-4848\src" "$w\panel-4848\src" /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
 robocopy "$repo\firmware\src" "$w\panel-4848\src" /XF main.cpp secrets.example.h panel_pins.h /NFL /NDL /NJH /NJS /NP | Out-Null

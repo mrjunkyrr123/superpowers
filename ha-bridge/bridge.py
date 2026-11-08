@@ -25,14 +25,40 @@ PANEL_SHA = bytes.fromhex(os.environ.get('PANEL_TOKEN_SHA256', '00' * 32))
 CONFIG = os.environ.get('CONFIG', os.path.join(os.path.dirname(__file__), 'config.json'))
 PORT = int(os.environ.get('PORT', '8090'))
 
-# Палитра макета 08.11.2026 (tokens.json дизайнера) — та же, что у дашборда RECOROOM.
-C = {'text': '#FFFFFF', 'text2': '#A5A6A5', 'text3': '#6B696B', 'line': '#292829',
-     'surface': '#101010', 'surface2': '#212021', 'bg': '#000000', 'brand': '#EF2C52',
-     'on': '#EFE3BD', 'on_ink2': '#6B5D42', 'ink': '#101010', 'crit': '#E7494A'}
+# Палитра «умного дома» (владелец, 08.11.2026: ближе к тёмным панелям с синим акцентом).
+# Шапка — как у дашборда RECOROOM.
+C = {'text': '#FFFFFF', 'text2': '#8E8F94', 'text3': '#5C5D62', 'line': '#292829',
+     'card': '#16171B', 'card2': '#25262B', 'bg': '#000000', 'brand': '#EF2C52',
+     'accent': '#2F7BF5', 'accent2': '#6EA4FF', 'knob_off': '#3A3B40', 'warm': '#F5A623',
+     'crit': '#E7494A'}
 M, W = 16, 480
 TOGGLE = {'switch', 'light', 'fan', 'input_boolean', 'cover'}
 
-# В шрифтах прошивки — ASCII, кириллица и «Ёё°—₽«»№·…✓−» (tools/genfont.py).
+# Значки — шрифт i20/i24 прошивки (Tabler Icons, tools/genfont.py: ICONS).
+ICON = {
+    'bulb': '', 'lamp': '', 'lamp-2': '', 'device-desktop': '',
+    'droplet': '', 'wind': '', 'temperature': '', 'cloud': '',
+    'plug': '', 'home': '', 'sun': '', 'moon': '',
+    'briefcase': '', 'movie': '', 'door-exit': '', 'power': '',
+    'air-conditioning': '', 'sofa': '', 'bed': '', 'sunrise': '',
+}
+# Значок по слову в названии, если в config.json не задан "icon".
+GUESS = [('ламп', 'bulb'), ('ночник', 'lamp'), ('свет', 'bulb'), ('комп', 'device-desktop'),
+         ('увлажн', 'droplet'), ('озон', 'wind'), ('кондиц', 'air-conditioning'),
+         ('обогрев', 'temperature'), ('розет', 'plug'), ('утро', 'sunrise'), ('работ', 'briefcase'),
+         ('кино', 'movie'), ('сон', 'moon'), ('ушёл', 'door-exit'), ('ушел', 'door-exit'),
+         ('выкл', 'power'), ('дом', 'home')]
+
+
+def icon_for(item, fallback='power'):
+    name = str(item.get('icon') or '')
+    if name in ICON:
+        return ICON[name]
+    low = str(item.get('name', '')).lower()
+    return ICON[next((ic for key, ic in GUESS if key in low), fallback)]
+
+
+# В шрифтах прошивки — ASCII, кириллица, «Ёё°—₽«»№·…✓−» и значки U+E000..U+F8FF.
 EXTRA = 'Ёё°—₽«»№·…✓−'
 
 
@@ -40,7 +66,7 @@ def fit(s):
     out = []
     for ch in str(s):
         o = ord(ch)
-        if 0x20 <= o < 0x7F or 0x410 <= o <= 0x44F or ch in EXTRA:
+        if 0x20 <= o < 0x7F or 0x410 <= o <= 0x44F or ch in EXTRA or 0xE000 <= o <= 0xF8FF:
             out.append(ch)
         elif ch == '–':
             out.append('—')
@@ -81,10 +107,28 @@ def rect(x, y, w, h, c, r=0):
 ACT = '/api/display/home/act/'
 
 
-def button(bid, x, y, w, h, label, bg, fg, entity, f='b16'):
-    return {'t': 'button', 'id': bid, 'x': x, 'y': y, 'w': w, 'h': h, 'r': 12, 'f': f,
-            's': fit(label), 'c': C[fg], 'bg': C[bg],
-            'action': {'method': 'POST', 'path': ACT + entity}}
+def zone(zid, x, y, w, h, entity, r=16):
+    """Невидимая зона касания поверх плитки; нажатую плата обводит рамкой 2 px."""
+    return {'t': 'zone', 'id': zid, 'x': x, 'y': y, 'w': w, 'h': h, 'r': r, 'pr': 'frame',
+            'pc': C['accent'], 'action': {'method': 'POST', 'path': ACT + entity}}
+
+
+def disc(x, y, d, c):
+    """Круг диаметра d — скруглённый прямоугольник с радиусом d/2."""
+    return rect(x, y, d, d, c, d // 2)
+
+
+def header(title):
+    return [rect(M, 16, 4, 18, 'brand'), text(28, 15, 330, title, 'b16', el=True),
+            {'t': 'wifi', 'st': 'bars', 'x': 386, 'y': 17, 'c': C['text2'], 'bg': C['line']},
+            {'t': 'clock', 'x': 412, 'y': 15, 'w': 52, 'f': 'b16', 'c': C['text2'], 'a': 'r'},
+            {'t': 'line', 'x': M, 'y': 47, 'x2': W - M - 1, 'y2': 47, 'c': C['line']}]
+
+
+def toggle(x, y, on):
+    """Переключатель-таблетка 44x24: включён — синий, кружок справа."""
+    return [rect(x, y, 44, 24, 'accent' if on else 'knob_off', 12),
+            disc(x + 23 if on else x + 3, y + 3, 18, 'text' if on else 'text2')]
 
 
 def num(v, digits=1):
@@ -96,13 +140,11 @@ def num(v, digits=1):
 
 
 def build(conf, st):
-    """Экран «Дом» по макету 08.11: датчики сверху, плитки устройств по две вплотную,
-    сцены по три. Плитка — слои (фон, имя, состояние) и поверх невидимая зона касания:
-    нажатую плата обводит рамкой 2 px."""
-    e = [rect(M, 16, 4, 18, 'brand'), text(28, 15, 330, conf.get('title', 'ДОМ'), 'b16', el=True),
-         {'t': 'wifi', 'st': 'bars', 'x': 386, 'y': 17, 'c': C['text2'], 'bg': C['line']},
-         {'t': 'clock', 'x': 412, 'y': 15, 'w': 52, 'f': 'b16', 'c': C['text2'], 'a': 'r'},
-         {'t': 'line', 'x': M, 'y': 47, 'x2': W - M - 1, 'y2': 47, 'c': C['line']}]
+    """Экраны дома (владелец, 08.11.2026: ближе к тёмным панелям с синим акцентом).
+    «Дом»: датчики, плитки устройств по две — значок в кружке, переключатель, имя,
+    состояние. «Сцены» — отдельным экраном, если они есть: шесть плиток не влезают
+    на 4 дюйма вместе с устройствами."""
+    e = header(conf.get('title', 'ДОМ'))
     y = 60
     sensors = conf.get('sensors', [])[:2]
     sw = 448 if len(sensors) == 1 else 220
@@ -110,39 +152,55 @@ def build(conf, st):
         x = M + i * 228
         t = num(st.get(s.get('temperature'), {}).get('state'))
         h = num(st.get(s.get('humidity'), {}).get('state'), 0)
-        e += [rect(x, y, sw, 72, 'surface', 12),
-              text(x + 14, y + 10, sw - 28, s.get('name', ''), 'm14', 'text2', el=True),
-              text(x + 14, y + 30, 120, (t + '°') if t else '—', 'b28'),
-              text(x + sw - 104, y + 38, 90, (h + ' %') if h else '', 'm16', 'text2', 'r')]
+        e += [rect(x, y, sw, 72, 'card', 16),
+              disc(x + 14, y + 16, 40, 'card2'),
+              text(x + 22, y + 24, 24, ICON['temperature'], 'i24', 'warm'),
+              text(x + 66, y + 10, sw - 80, s.get('name', ''), 'm14', 'text2', el=True),
+              text(x + 66, y + 30, 100, (t + '°') if t else '—', 'b28')]
+        if h:
+            e += [text(x + sw - 86, y + 40, 20, ICON['droplet'], 'i20', 'accent2'),
+                  text(x + sw - 62, y + 38, 50, h + ' %', 'm16', 'text2')]
     if sensors:
-        y += 84
-    for i, d in enumerate(conf.get('devices', [])[:6]):
-        x, yy = M + (i % 2) * 224, y + (i // 2) * 64
+        y += 80
+    devices = conf.get('devices', [])[:6]
+    th = 96   # три ряда: 140..444, кружок значка не налезает на имя
+    for i, d in enumerate(devices):
+        x, yy = M + (i % 2) * 228, y + (i // 2) * (th + 8)
         s = st.get(d['entity'], {})
         state = s.get('state', 'unavailable')
         name = d.get('name') or s.get('attributes', {}).get('friendly_name', d['entity'])
+        ic = icon_for(dict(d, name=name))
         if state in ('unavailable', 'unknown') or not s:
-            e += [rect(x, yy, 224, 56, 'line', 12), rect(x + 2, yy + 2, 220, 52, 'bg', 10),
-                  text(x + 14, yy + 10, 196, name, 'b16', 'text3', el=True),
-                  text(x + 14, yy + 30, 196, 'нет связи', 'm14', 'crit')]
+            e += [rect(x, yy, 220, th, 'card2', 16), rect(x + 1, yy + 1, 218, th - 2, 'bg', 15),
+                  disc(x + 14, yy + 12, 40, 'card'),
+                  text(x + 22, yy + 20, 24, ic, 'i24', 'text3'),
+                  text(x + 14, yy + th - 42, 192, name, 'b16', 'text3', el=True),
+                  text(x + 14, yy + th - 22, 192, 'нет связи', 'm14', 'crit')]
             continue
         on = state in ('on', 'open', 'opening')
-        e += [rect(x, yy, 224, 56, 'on' if on else 'surface2', 12),
-              text(x + 14, yy + 10, 196, name, 'b16', 'ink' if on else 'text', el=True),
-              text(x + 14, yy + 30, 196, 'включено' if on else 'выключено', 'm14',
-                   'on_ink2' if on else 'text3'),
-              {'t': 'zone', 'id': 'd%d' % i, 'x': x, 'y': yy, 'w': 224, 'h': 56, 'r': 12,
-               'pr': 'frame', 'pc': C['on_ink2'] if on else C['text'],
-               'action': {'method': 'POST', 'path': ACT + d['entity']}}]
-    rows = (min(len(conf.get('devices', [])), 6) + 1) // 2
-    y += rows * 64 + 4
-    for i, sc in enumerate(conf.get('scenes', [])[:6]):
-        x, yy = M + (i % 3) * 152, y + (i // 3) * 56
-        if yy + 48 > 452:
-            break
-        e.append(button('s%d' % i, x, yy, 144, 48, sc.get('name', sc['entity']), 'surface', 'text',
-                        sc['entity']))
-    return {'v': 1, 'w': W, 'h': W, 'pages': [{'id': 'home', 'layers': e}]}
+        e += [rect(x, yy, 220, th, 'card', 16),
+              disc(x + 14, yy + 12, 40, 'accent' if on else 'card2'),
+              text(x + 22, yy + 20, 24, ic, 'i24', 'text' if on else 'text2')]
+        e += toggle(x + 220 - 14 - 44, yy + 20, on)
+        e += [text(x + 14, yy + th - 42, 192, name, 'b16', el=True),
+              text(x + 14, yy + th - 22, 192, 'включено' if on else 'выключено', 'm14',
+                   'accent2' if on else 'text3'),
+              zone('d%d' % i, x, yy, 220, th, d['entity'])]
+    pages = [{'id': 'home', 'layers': e}]
+
+    scenes = conf.get('scenes', [])[:6]
+    if scenes:
+        e = header('СЦЕНЫ')
+        sh = 120
+        for i, sc in enumerate(scenes):
+            x, yy = M + (i % 2) * 228, 60 + (i // 2) * (sh + 8)
+            e += [rect(x, yy, 220, sh, 'card', 16),
+                  disc(x + 16, yy + 16, 48, 'card2'),
+                  text(x + 28, yy + 28, 24, icon_for(sc), 'i24', 'accent2'),
+                  text(x + 16, yy + sh - 44, 188, sc.get('name', sc['entity']), 'b20', el=True),
+                  zone('s%d' % i, x, yy, 220, sh, sc['entity'])]
+        pages.append({'id': 'scenes', 'layers': e})
+    return {'v': 1, 'w': W, 'h': W, 'pages': pages}
 
 
 def allowed(conf):

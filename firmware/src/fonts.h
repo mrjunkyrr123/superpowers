@@ -32,6 +32,8 @@ extern const GfxFont FONT_B16;
 extern const GfxFont FONT_B20;
 extern const GfxFont FONT_B28;
 extern const GfxFont FONT_B48;
+extern const GfxFont FONT_I20;
+extern const GfxFont FONT_I24;
 
 // Поиск шрифта по идентификатору из JSON ("f5", "b16", ...).
 // Возвращает nullptr, если имя неизвестно.

@@ -209,9 +209,10 @@ def build_hand_font():
     return out, HAND_ROWS, HAND_BASELINE
 
 
-def build_ttf_font(path, size, charset, bpp=1, line=None):
+def build_ttf_font(path, size, charset, bpp=1, line=None, icon=False):
     """bpp=1 — точка есть/нет; bpp=4 — 16 градаций, сглаживание по фону.
-    line — высота строки из макета: текст стоит посередине строки, как в Figma."""
+    line — высота строки из макета: текст стоит посередине строки, как в Figma.
+    icon — шрифт значков: каждый значок по центру клетки size x size, шаг = size."""
     from PIL import Image, ImageDraw, ImageFont
     from fontTools.ttLib import TTFont
     font = ImageFont.truetype(path, size)
@@ -243,6 +244,12 @@ def build_ttf_font(path, size, charset, bpp=1, line=None):
         baseline = 2 + ascent
         out[ch] = dict(bits=bits, w=w, h=h, dx=dx - 2,
                        dy=ytop - baseline, adv=adv)
+    if icon:
+        # Верх строки = верх клетки; базовая линия — её середина.
+        base = size // 2
+        for g in out.values():
+            g.update(dx=(size - g['w']) // 2, dy=(size - g['h']) // 2 - base, adv=size)
+        return out, size, base
     if line:
         return out, line, (line - ascent - descent) // 2 + ascent
     return out, ascent + descent, ascent
@@ -297,6 +304,18 @@ CHARSET_ONEST = CHARSET + list('₽«»№·…✓−')
 
 ONEST = os.path.join(HERE, 'fonts')
 
+# Значки Tabler Icons (MIT, tools/fonts/tabler-icons-LICENSE.txt) — шрифтом, картинок плата
+# не умеет. Кодовые точки — из tabler-icons-outline.css 3.19.0. Сервер и мостик шлют их
+# символами U+E000..U+F8FF; имена — для читаемости кода (ha-bridge/bridge.py, ICON).
+ICONS = {
+    'bulb': 0xEA51, 'bulb-off': 0xEA50, 'lamp': 0xEFAB, 'lamp-2': 0xF09E,
+    'device-desktop': 0xEA89, 'droplet': 0xEA97, 'wind': 0xEC34, 'temperature': 0xEB38,
+    'cloud': 0xEA76, 'plug': 0xEBD9, 'home': 0xEAC1, 'sun': 0xEB30, 'moon': 0xEAF8,
+    'briefcase': 0xEA46, 'movie': 0xEAFA, 'door-exit': 0xEF4D, 'power': 0xEB0D,
+    'air-conditioning': 0xF3A2, 'sofa': 0xEFAF, 'bed': 0xEB5C, 'sunrise': 0xEF1C,
+}
+ICON_CHARSET = [chr(c) for c in ICONS.values()]
+
 # (имя, вид, файл, кегль, бит на точку, высота строки из макета)
 #
 # DejaVu — от табло 64x32 и первой вёрстки 480x480; 'keep' берёт их растр из прошлой
@@ -316,6 +335,8 @@ FONTS = [
     ('b20', 'ttf', f'{ONEST}/onest-700.ttf', 20, 4, 26),
     ('b28', 'ttf', f'{ONEST}/onest-700.ttf', 28, 4, 34),
     ('b48', 'ttf', f'{ONEST}/onest-700.ttf', 48, 4, 58),
+    ('i20', 'icon', f'{ONEST}/tabler-icons-outline.ttf', 20, 4, None),
+    ('i24', 'icon', f'{ONEST}/tabler-icons-outline.ttf', 24, 4, None),
 ]
 
 
@@ -326,6 +347,8 @@ def build_all():
             glyphs, ya, base = build_hand_font()
         elif kind == 'keep':
             glyphs, ya, base = load_kept_font(name)
+        elif kind == 'icon':
+            glyphs, ya, base = build_ttf_font(path, size, ICON_CHARSET, bpp, icon=True)
         else:
             glyphs, ya, base = build_ttf_font(path, size, CHARSET_ONEST, bpp, line)
         built[name] = (glyphs, ya, base, bpp)
