@@ -1,16 +1,11 @@
 {
   "title": "ДОМ",
   "sensors": [
-    { "name": "Метео", "temperature": "sensor.datchik_meteo_temperature", "humidity": "sensor.datchik_meteo_humidity" },
-    { "name": "Датчик", "temperature": "sensor.datchik_temperature", "humidity": "sensor.datchik_humidity" }
+    { "name": "Метео", "temperature": "sensor.datchik_meteo_temperature", "humidity": "sensor.datchik_meteo_humidity", "co2": "sensor.datchik_meteo_carbon_dioxide" }
   ],
   "devices": [
-    { "entity": "switch.lampa_switch_1", "name": "Лампа" },
-    { "entity": "switch.komp_socket_1", "name": "Комп" },
-    { "entity": "switch.uvlazhnitel", "name": "Увлажнитель" },
-    { "entity": "switch.ozonator_switch_1", "name": "Озонатор" },
-    { "entity": "switch.obshchee_osveshchenie_switch_1", "name": "Общий свет" },
-    { "entity": "switch.svet_koridor_switch_1", "name": "Свет коридор" }
+    { "entity": "switch.lampa_switch_1", "name": "Лампа Даши" },
+    { "entity": "switch.uvlazhnitel", "name": "Увлажнитель" }
   ],
   "scenes": []
 }

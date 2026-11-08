@@ -30,7 +30,7 @@ PORT = int(os.environ.get('PORT', '8090'))
 C = {'text': '#FFFFFF', 'text2': '#8E8F94', 'text3': '#5C5D62', 'line': '#292829',
      'card': '#16171B', 'card2': '#25262B', 'bg': '#000000', 'brand': '#EF2C52',
      'accent': '#2F7BF5', 'accent2': '#6EA4FF', 'knob_off': '#3A3B40', 'warm': '#F5A623',
-     'crit': '#E7494A'}
+     'ok': '#39C34A', 'warn': '#F7AE10', 'crit': '#E7494A'}
 M, W = 16, 480
 TOGGLE = {'switch', 'light', 'fan', 'input_boolean', 'cover'}
 
@@ -157,7 +157,17 @@ def build(conf, st):
               text(x + 22, y + 24, 24, ICON['temperature'], 'i24', 'warm'),
               text(x + 66, y + 10, sw - 80, s.get('name', ''), 'm14', 'text2', el=True),
               text(x + 66, y + 30, 100, (t + '°') if t else '—', 'b28')]
-        if h:
+        co2 = num(st.get(s.get('co2'), {}).get('state'), 0)
+        if co2 and sw == 448:
+            # CO2 справа крупно, цветом по уровню: до 800 — норма, до 1200 — проветрить, выше — плохо.
+            v = int(co2)
+            c = 'ok' if v < 800 else 'warn' if v < 1200 else 'crit'
+            e += [text(x + 300, y + 10, 134, 'CO2, ppm', 'm14', 'text2', 'r'),
+                  text(x + 300, y + 30, 134, co2, 'b28', c, 'r')]
+            if h:
+                e += [text(x + 186, y + 40, 20, ICON['droplet'], 'i20', 'accent2'),
+                      text(x + 210, y + 38, 60, h + ' %', 'm16', 'text2')]
+        elif h:
             e += [text(x + sw - 86, y + 40, 20, ICON['droplet'], 'i20', 'accent2'),
                   text(x + sw - 62, y + 38, 50, h + ' %', 'm16', 'text2')]
     if sensors:
