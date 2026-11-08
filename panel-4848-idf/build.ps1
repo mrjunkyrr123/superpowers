@@ -1,4 +1,4 @@
-# Сборка panel-4848-idf. Запуск: powershell -File build.ps1 [ota]   (ota — ещё и прошить по воздуху)
+﻿# Сборка panel-4848-idf. Запуск: powershell -File build.ps1 [ota]   (ota — ещё и прошить по воздуху)
 #
 # ESP-IDF не принимает пробелы в пути, а PlatformIO раскрывает ссылки до настоящего пути,
 # поэтому исходники зеркалятся в C:\pio21\w. Общие файлы из firmware/src кладутся рядом с

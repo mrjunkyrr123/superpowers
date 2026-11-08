@@ -1,4 +1,4 @@
-# Upload the built firmware over Wi-Fi. Needs the panel online: first 3 minutes after power-on on the
+﻿# Upload the built firmware over Wi-Fi. Needs the panel online: first 3 minutes after power-on on the
 # scheduled-radio firmware, any time on panel-4848-idf. No --debug: espota prints the password with it.
 param([string]$Target = 'panel-4848.local')
 $fw = 'C:\pio21\w\panel-4848-idf\.pio\build\guition4848_idf\firmware.bin'
